@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, ipcMain } from 'electron';
+import { app, BrowserWindow, Tray, Menu, ipcMain, screen } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -12,14 +12,20 @@ let tray = null;
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 function createWindow() {
+  // Get display dimensions excluding the Windows taskbar
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { x, y, width, height } = primaryDisplay.workArea;
+
   mainWindow = new BrowserWindow({
-    width: 1920,
-    height: 1080,
-    fullscreen: true,
-    transparent: true,
+    x,
+    y,
+    width,
+    height,
     frame: false,
+    transparent: true,
     hasShadow: false,
     skipTaskbar: true,
+    resizable: false,
     alwaysOnTop: false,
     webPreferences: {
       nodeIntegration: true,
@@ -57,13 +63,10 @@ function createTray() {
   }
 
   const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Focus Dashboard',
-      enabled: false
-    },
+    { label: 'Anime Focus Dashboard', enabled: false },
     { type: 'separator' },
     {
-      label: 'Show / Bring to Front',
+      label: 'Show / Focus Dashboard',
       click: () => {
         if (mainWindow) {
           mainWindow.show();
@@ -79,7 +82,7 @@ function createTray() {
     },
     { type: 'separator' },
     {
-      label: 'Quit Focus Dashboard',
+      label: 'Quit',
       click: () => {
         app.isQuitting = true;
         app.quit();

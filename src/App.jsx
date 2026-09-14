@@ -4,13 +4,13 @@ import {
   Volume2, Check, Trash2, Edit2, X, Image as ImageIcon,
   Flame, Coffee, Upload, Zap, Move, Play, Pause,
   RotateCcw as SkipBack15, RotateCw as SkipFwd15,
-  SkipForward, SkipBack, Radio
+  SkipForward, SkipBack, Radio, Monitor
 } from 'lucide-react';
 
 const { ipcRenderer } = window.require ? window.require('electron') : {};
 
 const DEFAULT_WALLPAPERS = [
-  { id: 'none', name: 'Transparent', url: '', type: 'none' },
+  { id: 'none', name: 'Transparent (Desktop)', url: '', type: 'none' },
   { 
     id: 'jujutsu-kaisen', 
     name: 'Jujutsu Kaisen', 
@@ -38,15 +38,27 @@ const DEFAULT_WALLPAPERS = [
 ];
 
 const SOUNDS = [
-  { id: 'lofi', name: 'Lo-Fi Rain & Thunder', url: 'https://cdn.pixabay.com/download/audio/2022/05/16/audio_db6591201e.mp3?filename=rain-and-nostalgia-lofi-112347.mp3' },
-  { id: 'ambient', name: 'Tokyo Night Drive', url: 'https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=chill-lofi-song-8444.mp3' },
-  { id: 'brown', name: 'Deep Binaural Focus', url: 'https://cdn.pixabay.com/download/audio/2021/08/09/audio_88424c5229.mp3?filename=lofi-study-112191.mp3' }
+  { 
+    id: 'lofi', 
+    name: 'Lo-Fi Rain & Thunder', 
+    url: 'https://actions.google.com/sounds/v1/weather/summer_thunder_and_rain.ogg' 
+  },
+  { 
+    id: 'ambient', 
+    name: 'Tokyo Night Drive', 
+    url: 'https://actions.google.com/sounds/v1/ambiences/crickets_with_distant_traffic.ogg' 
+  },
+  { 
+    id: 'brown', 
+    name: 'Deep Binaural Focus', 
+    url: 'https://actions.google.com/sounds/v1/water/small_stream_flowing.ogg' 
+  }
 ];
 
 const YT_PRESETS = [
-  { id: 'jfKfPfyJRdk', name: 'Lofi Girl 24/7', type: 'video' },
-  { id: '4xDzrJKXOOY', name: 'Synthwave Radio', type: 'video' },
-  { id: 'PLozT_Fq2yO7d6eK6R0K5m4N8h0S-fG8w1', name: 'Anime Chill Playlist', type: 'playlist' }
+  { id: '4xDzrJKXOOY', name: 'Synthwave Radio' },
+  { id: 'CFGLoQIhmow', name: 'Lofi Girl Relax' },
+  { id: 'UIzQEt2pRus', name: 'Cozy Piano Jazz' }
 ];
 
 const FONT_STYLES = {
@@ -114,6 +126,10 @@ export default function App() {
       return bg === 'custom' ? 'jujutsu-kaisen' : (bg || 'jujutsu-kaisen'); 
     } catch { return 'jujutsu-kaisen'; }
   });
+
+  const [desktopMode, setDesktopMode] = useState(() => {
+    try { return localStorage.getItem('desktopMode') === 'true'; } catch { return false; }
+  });
   
   const [customBg, setCustomBg] = useState('');
   const [customBgType, setCustomBgType] = useState('image');
@@ -138,17 +154,17 @@ export default function App() {
     } catch { return []; }
   });
 
-  // Pomodoro
+  // Pomodoro Timer State
   const [timeLeft, setTimeLeft] = useState(focusDuration * 60);
   const [isRunning, setIsRunning] = useState(false);
   const [isBreak, setIsBreak] = useState(false);
   
-  // Task Editing
+  // Task Editing State
   const [newTask, setNewTask] = useState('');
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskText, setEditingTaskText] = useState('');
   
-  // Audio & YouTube State
+  // Audio & YouTube Player State
   const [activeTab, setActiveTab] = useState(null);
   const [audioMode, setAudioMode] = useState('ambient');
   const [selectedSound, setSelectedSound] = useState(null);
@@ -156,7 +172,7 @@ export default function App() {
   const [ytUrl, setYtUrl] = useState('');
   const [ytState, setYtState] = useState({ isPlaying: false, isReady: false, isPlaylist: false, currentTitle: '' });
   
-  // Seeking Progress State
+  // Progress Scrubber State
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
@@ -170,7 +186,6 @@ export default function App() {
   const dragDataRef = useRef({ startX: 0, startY: 0, initX: 0, initY: 0, currentX: 0, currentY: 0 });
   const animFrameRef = useRef(null);
 
-  // Dynamic Click-Through Helper
   const setInteractive = (interactive) => {
     if (ipcRenderer) {
       if (interactive) {
@@ -197,6 +212,7 @@ export default function App() {
       localStorage.setItem('uiScale', uiScale);
       localStorage.setItem('fontStyle', fontStyle);
       localStorage.setItem('currentBg', currentBg === 'custom' ? 'none' : currentBg);
+      localStorage.setItem('desktopMode', desktopMode);
       localStorage.setItem('enableParticles', enableParticles);
       localStorage.setItem('layoutMode', layoutMode);
       localStorage.setItem('widgetPos', JSON.stringify(pos));
@@ -204,7 +220,7 @@ export default function App() {
     } catch (err) {
       console.warn('LocalStorage guarded:', err);
     }
-  }, [focusDuration, breakDuration, uiScale, fontStyle, currentBg, enableParticles, layoutMode, pos, tasks]);
+  }, [focusDuration, breakDuration, uiScale, fontStyle, currentBg, desktopMode, enableParticles, layoutMode, pos, tasks]);
 
   useEffect(() => {
     let interval = null;
@@ -539,6 +555,7 @@ export default function App() {
       setCustomBg(blobUrl);
       setCustomBgType(isVideo ? 'video' : 'image');
       setCurrentBg('custom');
+      setDesktopMode(false);
     }
   };
 
@@ -549,9 +566,12 @@ export default function App() {
   };
 
   const scale = UI_SCALES[uiScale] || UI_SCALES.md;
-  const activeBg = currentBg === 'custom' 
-    ? { url: customBg, type: customBgType } 
-    : DEFAULT_WALLPAPERS.find(w => w.id === currentBg);
+  
+  const activeBg = desktopMode 
+    ? null 
+    : (currentBg === 'custom' 
+        ? { url: customBg, type: customBgType } 
+        : DEFAULT_WALLPAPERS.find(w => w.id === currentBg));
 
   const getWidgetTransform = () => {
     if (layoutMode === 'custom') {
@@ -626,24 +646,44 @@ export default function App() {
         }}
         className="flex flex-col items-center select-none z-30 pointer-events-auto"
       >
-        {/* Drag Pill */}
-        <div 
-          onMouseDown={handleDragStart}
-          className="flex items-center gap-2 bg-zinc-950/85 border border-white/15 px-3.5 py-1.5 rounded-full backdrop-blur-md shadow-2xl cursor-grab active:cursor-grabbing hover:border-amber-400/60 transition group mb-1.5"
-          title="Click and drag smoothly anywhere"
-        >
-          <Move size={12} className="text-zinc-500 group-hover:text-amber-300 transition" />
-          {isBreak ? (
-            <>
-              <Coffee size={13} className="text-emerald-400 animate-pulse" />
-              <span className="text-xs tracking-wider uppercase font-bold text-emerald-400">Break Mode</span>
-            </>
-          ) : (
-            <>
-              <Flame size={13} className="text-amber-400 animate-pulse" />
-              <span className="text-xs tracking-wider uppercase font-bold text-amber-300">Focus Flow</span>
-            </>
-          )}
+        {/* Drag Pill + Desktop Mode Toggle Button */}
+        <div className="flex items-center gap-2 mb-1.5">
+          <div 
+            onMouseDown={handleDragStart}
+            className="flex items-center gap-2 bg-zinc-950/85 border border-white/15 px-3.5 py-1.5 rounded-full backdrop-blur-md shadow-2xl cursor-grab active:cursor-grabbing hover:border-amber-400/60 transition group"
+            title="Click and drag smoothly anywhere"
+          >
+            <Move size={12} className="text-zinc-500 group-hover:text-amber-300 transition" />
+            {isBreak ? (
+              <>
+                <Coffee size={13} className="text-emerald-400 animate-pulse" />
+                <span className="text-xs tracking-wider uppercase font-bold text-emerald-400">Break Mode</span>
+              </>
+            ) : (
+              <>
+                <Flame size={13} className="text-amber-400 animate-pulse" />
+                <span className="text-xs tracking-wider uppercase font-bold text-amber-300">Focus Flow</span>
+              </>
+            )}
+          </div>
+
+          <button
+            onClick={() => {
+              const nextState = !desktopMode;
+              setDesktopMode(nextState);
+              if (nextState) {
+                setActiveTab(null);
+              }
+            }}
+            className={`p-1.5 rounded-full border backdrop-blur-md shadow-lg transition cursor-pointer active:scale-95 ${
+              desktopMode 
+                ? 'bg-amber-400 text-zinc-950 border-amber-400' 
+                : 'bg-zinc-950/85 text-zinc-400 border-white/15 hover:text-zinc-200 hover:border-white/30'
+            }`}
+            title={desktopMode ? "Showing Desktop Icons (Click to restore backdrop)" : "Hide Backdrop / Show Desktop Icons"}
+          >
+            <Monitor size={14} />
+          </button>
         </div>
 
         {/* Digital Clock Display */}
@@ -781,7 +821,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* Floating Modals & Dock Controls */}
+      {/* Floating Modals & Bottom Controls */}
       <footer 
         onMouseEnter={() => setInteractive(true)}
         onMouseLeave={() => setInteractive(false)}
@@ -790,7 +830,6 @@ export default function App() {
         {/* Audio Deck */}
         {activeTab === 'music' && (
           <div className="w-[24.5rem] bg-zinc-950/95 border border-white/10 rounded-2xl p-5 backdrop-blur-xl shadow-2xl mb-2 flex flex-col gap-4 transition-all duration-300 ease-out">
-            {/* Header */}
             <div className="flex justify-between items-center pb-2.5 border-b border-zinc-800">
               <span className="text-sm uppercase tracking-wider font-bold text-zinc-300">Audio Deck</span>
               <button 
@@ -801,7 +840,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Tab Switcher */}
             <div className="grid grid-cols-2 gap-1.5 bg-zinc-900/80 p-1.5 rounded-xl border border-white/5">
               <button
                 onClick={() => setAudioMode('ambient')}
@@ -825,7 +863,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Viewport */}
             <div className="min-h-[265px] flex flex-col justify-between transition-all duration-300">
               {audioMode === 'ambient' ? (
                 <div className="flex flex-col gap-2 my-auto animate-fadeIn">
@@ -853,7 +890,6 @@ export default function App() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-2.5 justify-between h-full animate-fadeIn">
-                  {/* Presets */}
                   <div className="flex flex-col gap-1.5">
                     <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold flex items-center gap-1">
                       <Radio size={12} className="text-amber-400" /> Quick Stations
@@ -872,7 +908,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Input Form */}
                   <form onSubmit={handlePlayYouTubeForm} className="flex gap-2">
                     <input
                       type="text"
@@ -889,7 +924,6 @@ export default function App() {
                     </button>
                   </form>
 
-                  {/* Active Stream Transport with Scrubber */}
                   <div className={`bg-zinc-900/90 border border-white/10 rounded-xl p-3 flex flex-col gap-2 shadow-lg transition-all duration-200 ${ytState.isReady ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
                     <div className="text-xs text-amber-300 font-medium truncate drop-shadow px-1">
                       {ytState.isReady ? ytState.currentTitle : 'No active stream loaded'}
@@ -967,7 +1001,6 @@ export default function App() {
               )}
             </div>
 
-            {/* Master Volume Bar */}
             <div className="pt-2 flex items-center gap-2.5 border-t border-zinc-800/80">
               <Volume2 size={15} className="text-zinc-400 shrink-0" />
               <input
@@ -996,6 +1029,22 @@ export default function App() {
                 className="text-zinc-400 hover:text-zinc-200 p-1 rounded-lg hover:bg-zinc-800/60 transition cursor-pointer"
               >
                 <X size={14} />
+              </button>
+            </div>
+
+            {/* Desktop Mode Toggle in Settings */}
+            <div className="flex items-center justify-between bg-zinc-900/80 p-2.5 rounded-xl border border-white/5">
+              <div className="flex items-center gap-2">
+                <Monitor size={14} className="text-amber-400" />
+                <span className="text-xs text-zinc-200 font-medium">Show Desktop Icons (Transparent)</span>
+              </div>
+              <button
+                onClick={() => setDesktopMode(!desktopMode)}
+                className={`w-10 h-5 flex items-center rounded-full p-0.5 transition cursor-pointer ${
+                  desktopMode ? 'bg-amber-400 justify-end' : 'bg-zinc-700 justify-start'
+                }`}
+              >
+                <div className="w-4 h-4 rounded-full bg-zinc-950 shadow" />
               </button>
             </div>
 
@@ -1100,9 +1149,12 @@ export default function App() {
                 {DEFAULT_WALLPAPERS.map((bg) => (
                   <button
                     key={bg.id}
-                    onClick={() => setCurrentBg(bg.id)}
+                    onClick={() => {
+                      setCurrentBg(bg.id);
+                      setDesktopMode(bg.id === 'none');
+                    }}
                     className={`relative h-14 rounded-lg overflow-hidden border-2 transition cursor-pointer group flex items-center justify-center text-center p-1 ${
-                      currentBg === bg.id
+                      currentBg === bg.id && !desktopMode
                         ? 'border-amber-400 ring-2 ring-amber-400/20'
                         : 'border-white/10 hover:border-white/40'
                     }`}
@@ -1125,9 +1177,12 @@ export default function App() {
 
                 {customBg && (
                   <button
-                    onClick={() => setCurrentBg('custom')}
+                    onClick={() => {
+                      setCurrentBg('custom');
+                      setDesktopMode(false);
+                    }}
                     className={`relative h-14 rounded-lg overflow-hidden border-2 transition cursor-pointer group flex items-center justify-center text-center p-1 ${
-                      currentBg === 'custom'
+                      currentBg === 'custom' && !desktopMode
                         ? 'border-amber-400 ring-2 ring-amber-400/20'
                         : 'border-white/10 hover:border-white/40'
                     }`}
