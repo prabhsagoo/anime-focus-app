@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   RotateCcw, Plus, Music, Settings as SettingsIcon, 
   Volume2, Check, Trash2, Edit2, X, Image as ImageIcon,
-  Flame, Coffee, Upload, Zap, Move
+  Flame, Coffee, Upload, Zap, Move, Play, Square
 } from 'lucide-react';
 
 const DEFAULT_WALLPAPERS = [
@@ -32,8 +32,36 @@ const UI_SCALES = {
   xl: { clock: 'text-[11rem]', box: 'w-[32rem]', input: 'text-lg py-3', text: 'text-lg' }
 };
 
+const parseYouTubeUrl = (url) => {
+  if (!url) return null;
+  const cleanUrl = url.trim();
+  
+  const playlistMatch = cleanUrl.match(/[?&]list=([^#&?]+)/);
+  const playlistId = playlistMatch ? playlistMatch[1] : null;
+
+  const videoMatch = cleanUrl.match(/(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=[\\&]?)([^#&?]{11})/);
+  const videoId = videoMatch ? videoMatch[1] : null;
+
+  if (playlistId) {
+    return {
+      type: 'playlist',
+      src: videoId 
+        ? `https://www.youtube.com/embed/${videoId}?list=${playlistId}&autoplay=1&loop=1&enablejsapi=1`
+        : `https://www.youtube.com/embed/videoseries?list=${playlistId}&autoplay=1&loop=1&enablejsapi=1`
+    };
+  }
+
+  if (videoId) {
+    return {
+      type: 'video',
+      src: `https://www.youtube.com/embed/${videoId}?autoplay=1&loop=1&playlist=${videoId}&enablejsapi=1`
+    };
+  }
+
+  return null;
+};
+
 export default function App() {
-  // Safe LocalStorage getters
   const [focusDuration, setFocusDuration] = useState(() => {
     try { return Number(localStorage.getItem('focusDuration')) || 25; } catch { return 25; }
   });
@@ -86,8 +114,12 @@ export default function App() {
   const [editingTaskText, setEditingTaskText] = useState('');
   
   const [activeTab, setActiveTab] = useState(null);
+  const [audioMode, setAudioMode] = useState('ambient');
   const [selectedSound, setSelectedSound] = useState(null);
   const [volume, setVolume] = useState(0.5);
+  const [ytUrl, setYtUrl] = useState('');
+  const [ytEmbedSrc, setYtEmbedSrc] = useState('');
+  const [isYtPlaying, setIsYtPlaying] = useState(false);
 
   const audioRef = useRef(new Audio());
   const fileInputRef = useRef(null);
@@ -97,7 +129,6 @@ export default function App() {
   const dragDataRef = useRef({ startX: 0, startY: 0, initX: 0, initY: 0, currentX: 0, currentY: 0 });
   const animFrameRef = useRef(null);
 
-  // Safe localStorage saver (protects against quota crashes)
   useEffect(() => {
     try {
       localStorage.setItem('focusDuration', focusDuration);
@@ -110,11 +141,10 @@ export default function App() {
       localStorage.setItem('widgetPos', JSON.stringify(pos));
       localStorage.setItem('tasks', JSON.stringify(tasks));
     } catch (err) {
-      console.warn('LocalStorage save skipped to prevent memory overflow:', err);
+      console.warn('LocalStorage quota guarded:', err);
     }
   }, [focusDuration, breakDuration, uiScale, fontStyle, currentBg, enableParticles, layoutMode, pos, tasks]);
 
-  // Timer Logic
   useEffect(() => {
     let interval = null;
     if (isRunning && timeLeft > 0) {
@@ -128,9 +158,8 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isRunning, timeLeft, isBreak, focusDuration, breakDuration]);
 
-  // Audio Playback
   useEffect(() => {
-    if (selectedSound) {
+    if (selectedSound && audioMode === 'ambient') {
       const track = SOUNDS.find(s => s.id === selectedSound);
       if (track) {
         audioRef.current.src = track.url;
@@ -142,13 +171,12 @@ export default function App() {
       audioRef.current.pause();
     }
     return () => audioRef.current.pause();
-  }, [selectedSound]);
+  }, [selectedSound, audioMode]);
 
   useEffect(() => {
     audioRef.current.volume = volume;
   }, [volume]);
 
-  // Drag Handler
   const handleDragStart = (e) => {
     isDraggingRef.current = true;
     setLayoutMode('custom');
@@ -210,7 +238,6 @@ export default function App() {
     window.addEventListener('mouseup', onMouseUp);
   };
 
-  // Canvas Rain
   useEffect(() => {
     if (!enableParticles) return;
     const canvas = canvasRef.current;
@@ -300,7 +327,6 @@ export default function App() {
     setEditingTaskId(null);
   };
 
-  // High-Performance Large File Loader (Memory Streaming)
   const handleCustomUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -309,6 +335,16 @@ export default function App() {
       setCustomBg(blobUrl);
       setCustomBgType(isVideo ? 'video' : 'image');
       setCurrentBg('custom');
+    }
+  };
+
+  const handlePlayYouTube = (e) => {
+    e?.preventDefault();
+    const parsed = parseYouTubeUrl(ytUrl);
+    if (parsed) {
+      setSelectedSound(null);
+      setYtEmbedSrc(parsed.src);
+      setIsYtPlaying(true);
     }
   };
 
@@ -336,7 +372,6 @@ export default function App() {
   return (
     <div className="relative w-screen h-screen overflow-hidden select-none bg-transparent">
       
-      {/* Background Layer: Live Video (100MB+ support) or Image */}
       {activeBg && activeBg.url && (
         <div className="absolute inset-0 overflow-hidden -z-20">
           {activeBg.type === 'video' ? (
@@ -359,12 +394,28 @@ export default function App() {
         </div>
       )}
 
-      {/* Particle Canvas */}
       {enableParticles && (
         <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none -z-10" />
       )}
 
-      {/* GPU Draggable HUD Container */}
+      {ytEmbedSrc && isYtPlaying && (
+        <iframe
+    style={{
+      position: 'absolute',
+      left: '-9999px',
+      top: '-9999px',
+      width: '300px',
+      height: '200px',
+      visibility: 'visible',
+      opacity: 0.01,
+      pointerEvents: 'none'
+    }}
+    src={ytEmbedSrc}
+    title="YouTube Audio Stream"
+    allow="autoplay; encrypted-media; picture-in-picture"
+  />
+      )}
+
       <div 
         ref={widgetRef}
         style={{
@@ -376,7 +427,6 @@ export default function App() {
         }}
         className="flex flex-col items-center select-none z-30 pointer-events-auto"
       >
-        {/* Drag Pill */}
         <div 
           onMouseDown={handleDragStart}
           className="flex items-center gap-2.5 bg-zinc-950/85 border border-white/15 px-4 py-1.5 rounded-full backdrop-blur-md shadow-2xl cursor-grab active:cursor-grabbing hover:border-amber-400/60 transition group mb-2"
@@ -396,12 +446,10 @@ export default function App() {
           )}
         </div>
 
-        {/* Big Clock */}
         <h1 className={`${scale.clock} ${FONT_STYLES[fontStyle]} text-white drop-shadow-[0_8px_32px_rgba(0,0,0,0.95)] leading-none py-1`}>
           {formatTime(timeLeft)}
         </h1>
 
-        {/* Control Buttons */}
         <div className="flex gap-2.5 mt-3">
           <button
             onClick={toggleTimer}
@@ -418,7 +466,6 @@ export default function App() {
           </button>
         </div>
 
-        {/* Task Box */}
         <div className={`${scale.box} flex flex-col gap-2 mt-4`}>
           <div className="flex justify-between items-center px-1">
             <span className="text-[10px] uppercase tracking-widest text-zinc-400 font-bold drop-shadow">
@@ -521,52 +568,106 @@ export default function App() {
         </div>
       </div>
 
-      {/* Floating Modals & Dock Controls */}
       <footer className="fixed bottom-8 right-8 flex flex-col items-end gap-2 pointer-events-auto z-50">
         
-        {/* Sound Modal */}
         {activeTab === 'music' && (
-          <div className="w-72 bg-zinc-950/95 border border-white/10 rounded-2xl p-4 backdrop-blur-xl shadow-2xl mb-2 flex flex-col gap-3">
-            <div className="flex justify-between items-center pb-2 border-b border-zinc-800">
-              <span className="text-xs uppercase tracking-wider font-bold text-zinc-400">Audio Scenery</span>
+          <div className="w-80 bg-zinc-950/95 border border-white/10 rounded-2xl p-4 backdrop-blur-xl shadow-2xl mb-2 flex flex-col gap-3">
+            
+            <div className="flex justify-between items-center pb-1 border-b border-zinc-800/80">
+              <span className="text-xs uppercase tracking-wider font-bold text-zinc-400">Audio Deck</span>
               <button onClick={() => setActiveTab(null)} className="text-zinc-400 hover:text-zinc-200 cursor-pointer">
                 <X size={14} />
               </button>
             </div>
-            
-            <div className="flex flex-col gap-1.5">
-              {SOUNDS.map((sound) => (
-                <button
-                  key={sound.id}
-                  onClick={() => setSelectedSound(selectedSound === sound.id ? null : sound.id)}
-                  className={`text-left px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer flex justify-between items-center ${
-                    selectedSound === sound.id
-                      ? 'bg-[#FCD34D] text-zinc-950 font-bold'
-                      : 'bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 border border-white/5'
-                  }`}
-                >
-                  <span>{sound.name}</span>
-                  {selectedSound === sound.id && <span className="text-[10px] uppercase tracking-wider">Playing</span>}
-                </button>
-              ))}
+
+            <div className="grid grid-cols-2 gap-1 bg-zinc-900/80 p-1 rounded-xl border border-white/5">
+              <button
+                onClick={() => setAudioMode('ambient')}
+                className={`py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  audioMode === 'ambient' ? 'bg-[#FCD34D] text-zinc-950 shadow' : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                Ambient
+              </button>
+              <button
+                onClick={() => setAudioMode('youtube')}
+                className={`py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  audioMode === 'youtube' ? 'bg-[#FCD34D] text-zinc-950 shadow' : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                YouTube
+              </button>
             </div>
 
-            <div className="pt-2 flex items-center gap-2">
-              <Volume2 size={14} className="text-zinc-400" />
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={volume}
-                onChange={(e) => setVolume(parseFloat(e.target.value))}
-                className="w-full accent-amber-400 h-1 bg-zinc-800 rounded cursor-pointer"
-              />
-            </div>
+            {audioMode === 'ambient' ? (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  {SOUNDS.map((sound) => (
+                    <button
+                      key={sound.id}
+                      onClick={() => {
+                        setIsYtPlaying(false);
+                        setSelectedSound(selectedSound === sound.id ? null : sound.id);
+                      }}
+                      className={`text-left px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer flex justify-between items-center ${
+                        selectedSound === sound.id
+                          ? 'bg-[#FCD34D] text-zinc-950 font-bold'
+                          : 'bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 border border-white/5'
+                      }`}
+                    >
+                      <span>{sound.name}</span>
+                      {selectedSound === sound.id && <span className="text-[10px] uppercase tracking-wider">Playing</span>}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="pt-2 flex items-center gap-2 border-t border-white/5">
+                  <Volume2 size={14} className="text-zinc-400" />
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={volume}
+                    onChange={(e) => setVolume(parseFloat(e.target.value))}
+                    className="w-full accent-amber-400 h-1 bg-zinc-800 rounded cursor-pointer"
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <form onSubmit={handlePlayYouTube} className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Paste video or playlist URL..."
+                    value={ytUrl}
+                    onChange={(e) => setYtUrl(e.target.value)}
+                    className="bg-zinc-900/90 border border-white/10 rounded-xl px-3 py-2 text-xs w-full focus:outline-none focus:border-amber-400 text-zinc-100 placeholder-zinc-500"
+                  />
+                  <button
+                    type="submit"
+                    className="bg-[#FCD34D] text-zinc-950 px-3.5 py-2 rounded-xl text-xs font-bold hover:bg-[#fbbf24] transition cursor-pointer flex items-center gap-1 active:scale-95"
+                  >
+                    <Play size={12} fill="currentColor" /> Play
+                  </button>
+                </form>
+
+                {isYtPlaying && (
+                  <button
+                    onClick={() => {
+                      setIsYtPlaying(false);
+                      setYtEmbedSrc('');
+                    }}
+                    className="text-xs text-red-400 hover:text-red-300 py-1.5 text-center bg-red-950/30 border border-red-900/40 rounded-xl cursor-pointer flex items-center justify-center gap-1.5 transition active:scale-95"
+                  >
+                    <Square size={12} fill="currentColor" /> Stop Stream
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
 
-        {/* Settings Modal */}
         {activeTab === 'settings' && (
           <div className="w-84 bg-zinc-950/95 border border-white/10 rounded-2xl p-5 backdrop-blur-xl shadow-2xl mb-2 flex flex-col gap-4 max-h-[80vh] overflow-y-auto">
             <div className="flex justify-between items-center pb-2 border-b border-zinc-800">
@@ -576,7 +677,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Layout Presets */}
             <div className="flex flex-col gap-1.5">
               <span className="text-xs text-zinc-300 font-medium">Widget Placement</span>
               <div className="grid grid-cols-3 gap-1 bg-zinc-900/80 p-1 rounded-xl border border-white/5">
@@ -598,7 +698,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Particle Lightning & Rain */}
             <div className="flex items-center justify-between bg-zinc-900/80 p-2.5 rounded-xl border border-white/5">
               <div className="flex items-center gap-2">
                 <Zap size={14} className="text-amber-400" />
@@ -614,7 +713,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Scaling */}
             <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-1.5">
                 <span className="text-xs text-zinc-300 font-medium">UI Sizing Scale</span>
@@ -651,7 +749,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Wallpaper Selection */}
             <div className="flex flex-col gap-2">
               <div className="flex justify-between items-center text-xs text-zinc-300 font-medium">
                 <div className="flex items-center gap-1.5">
@@ -721,7 +818,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Intervals */}
             <div className="flex flex-col gap-1.5">
               <div className="flex justify-between text-xs text-zinc-300">
                 <span>Focus Interval</span>
@@ -760,7 +856,6 @@ export default function App() {
               />
             </div>
 
-            {/* Quick Add */}
             <div className="flex flex-col gap-1.5 pt-1">
               <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Add Extra Minutes</span>
               <div className="flex gap-2">
@@ -778,7 +873,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Action Dock */}
         <div className="flex items-center bg-zinc-950/80 border border-white/10 rounded-2xl p-1 gap-1 backdrop-blur-md shadow-2xl">
           <button
             onClick={() => setActiveTab(activeTab === 'music' ? null : 'music')}
