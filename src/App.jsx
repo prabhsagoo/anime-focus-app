@@ -34,10 +34,10 @@ const FONT_STYLES = {
 };
 
 const UI_SCALES = {
-  sm: { clock: 'text-7xl', box: 'w-80', input: 'text-xs py-1.5', text: 'text-xs' },
-  md: { clock: 'text-8xl', box: 'w-96', input: 'text-sm py-2', text: 'text-sm' },
-  lg: { clock: 'text-9xl', box: 'w-[28rem]', input: 'text-base py-2.5', text: 'text-base' },
-  xl: { clock: 'text-[11rem]', box: 'w-[32rem]', input: 'text-lg py-3', text: 'text-lg' }
+  sm: { clock: 'text-7xl', box: 'w-[19rem]' },
+  md: { clock: 'text-8xl', box: 'w-[22rem]' },
+  lg: { clock: 'text-9xl', box: 'w-[25rem]' },
+  xl: { clock: 'text-[11rem]', box: 'w-[28rem]' }
 };
 
 const parseYouTubeUrl = (url) => {
@@ -57,6 +57,20 @@ const parseYouTubeUrl = (url) => {
     return { type: 'video', targetId: videoId, videoId: videoId };
   }
   return null;
+};
+
+// Format seconds into MM:SS or HH:MM:SS
+const formatAudioTime = (sec) => {
+  if (!sec || isNaN(sec)) return '0:00';
+  const totalSeconds = Math.floor(sec);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 };
 
 export default function App() {
@@ -92,7 +106,7 @@ export default function App() {
   const [pos, setPos] = useState(() => {
     try {
       const saved = localStorage.getItem('widgetPos');
-      return saved ? JSON.parse(saved) : { x: window.innerWidth / 2 - 180, y: 70 };
+      return saved ? JSON.parse(saved) : { x: window.innerWidth / 2 - 176, y: 70 };
     } catch { return { x: 100, y: 70 }; }
   });
 
@@ -120,6 +134,11 @@ export default function App() {
   const [volume, setVolume] = useState(0.6);
   const [ytUrl, setYtUrl] = useState('');
   const [ytState, setYtState] = useState({ isPlaying: false, isReady: false, isPlaylist: false, currentTitle: '' });
+  
+  // Draggable Seeking Progress State
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [isSeeking, setIsSeeking] = useState(false);
 
   const audioRef = useRef(new Audio());
   const fileInputRef = useRef(null);
@@ -190,6 +209,22 @@ export default function App() {
     }
   }, [volume]);
 
+  // Live Position / Duration Poller
+  useEffect(() => {
+    let interval;
+    if (ytState.isPlaying && ytState.isReady && !isSeeking) {
+      interval = setInterval(() => {
+        if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
+          const curr = ytPlayerRef.current.getCurrentTime() || 0;
+          const dur = ytPlayerRef.current.getDuration() || 0;
+          setCurrentTime(curr);
+          setDuration(dur);
+        }
+      }, 500);
+    }
+    return () => clearInterval(interval);
+  }, [ytState.isPlaying, ytState.isReady, isSeeking]);
+
   const startYouTubeStream = (targetId, isPlaylist) => {
     setSelectedSound(null);
     audioRef.current.pause();
@@ -204,6 +239,8 @@ export default function App() {
     }
 
     setYtState({ isPlaying: false, isReady: false, isPlaylist: isPlaylist, currentTitle: 'Connecting...' });
+    setCurrentTime(0);
+    setDuration(0);
 
     const playerOptions = {
       height: '180',
@@ -227,6 +264,7 @@ export default function App() {
             isPlaying: true, 
             currentTitle: event.target.getVideoData()?.title || 'Streaming Audio'
           }));
+          setDuration(event.target.getDuration() || 0);
         },
         onStateChange: (event) => {
           if (event.data === 1) {
@@ -235,6 +273,7 @@ export default function App() {
               isPlaying: true, 
               currentTitle: event.target.getVideoData()?.title || prev.currentTitle 
             }));
+            setDuration(event.target.getDuration() || 0);
           } else if (event.data === 2) {
             setYtState(prev => ({ ...prev, isPlaying: false }));
           }
@@ -264,7 +303,22 @@ export default function App() {
   const skipYtSeconds = (seconds) => {
     if (!ytPlayerRef.current || !ytState.isReady) return;
     const current = ytPlayerRef.current.getCurrentTime() || 0;
-    ytPlayerRef.current.seekTo(Math.max(0, current + seconds), true);
+    const target = Math.max(0, current + seconds);
+    ytPlayerRef.current.seekTo(target, true);
+    setCurrentTime(target);
+  };
+
+  const handleSeekChange = (e) => {
+    setIsSeeking(true);
+    setCurrentTime(parseFloat(e.target.value));
+  };
+
+  const handleSeekMouseUp = (e) => {
+    setIsSeeking(false);
+    const targetTime = parseFloat(e.target.value);
+    if (ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+      ytPlayerRef.current.seekTo(targetTime, true);
+    }
   };
 
   const nextYtTrack = () => {
@@ -284,6 +338,8 @@ export default function App() {
       ytPlayerRef.current.stopVideo();
     }
     setYtState({ isPlaying: false, isReady: false, isPlaylist: false, currentTitle: '' });
+    setCurrentTime(0);
+    setDuration(0);
   };
 
   const handlePlayYouTubeForm = (e) => {
@@ -538,19 +594,19 @@ export default function App() {
         {/* Drag Pill */}
         <div 
           onMouseDown={handleDragStart}
-          className="flex items-center gap-2.5 bg-zinc-950/85 border border-white/15 px-4 py-1.5 rounded-full backdrop-blur-md shadow-2xl cursor-grab active:cursor-grabbing hover:border-amber-400/60 transition group mb-2"
+          className="flex items-center gap-2 bg-zinc-950/85 border border-white/15 px-3.5 py-1.5 rounded-full backdrop-blur-md shadow-2xl cursor-grab active:cursor-grabbing hover:border-amber-400/60 transition group mb-1.5"
           title="Click and drag smoothly anywhere"
         >
           <Move size={12} className="text-zinc-500 group-hover:text-amber-300 transition" />
           {isBreak ? (
             <>
               <Coffee size={13} className="text-emerald-400 animate-pulse" />
-              <span className="text-[11px] tracking-wider uppercase font-semibold text-emerald-400">Break Mode</span>
+              <span className="text-xs tracking-wider uppercase font-bold text-emerald-400">Break Mode</span>
             </>
           ) : (
             <>
               <Flame size={13} className="text-amber-400 animate-pulse" />
-              <span className="text-[11px] tracking-wider uppercase font-semibold text-amber-300">Focus Flow</span>
+              <span className="text-xs tracking-wider uppercase font-bold text-amber-300">Focus Flow</span>
             </>
           )}
         </div>
@@ -561,59 +617,69 @@ export default function App() {
         </h1>
 
         {/* Control Buttons */}
-        <div className="flex gap-2.5 mt-3">
+        <div className="flex items-center gap-2.5 mt-2.5">
           <button
             onClick={toggleTimer}
-            className="bg-[#FCD34D] hover:bg-[#fbbf24] text-zinc-950 font-bold px-7 py-2 rounded-xl text-xs transition-all shadow-[0_4px_20px_rgba(252,211,77,0.3)] cursor-pointer active:scale-95 flex items-center gap-1.5"
+            className="bg-[#FCD34D] hover:bg-[#fbbf24] text-zinc-950 font-bold px-7 py-2.5 rounded-xl text-sm transition-all duration-200 shadow-[0_4px_20px_rgba(252,211,77,0.3)] cursor-pointer active:scale-95 flex items-center gap-1.5"
           >
-            {isRunning ? 'Pause' : 'Start Focus'}
+            {isRunning ? (
+              <>
+                <Pause size={14} fill="currentColor" /> Pause
+              </>
+            ) : (
+              <>
+                <Play size={14} fill="currentColor" /> Start Focus
+              </>
+            )}
           </button>
           <button
             onClick={resetTimer}
             title="Reset Timer"
-            className="bg-zinc-950/70 hover:bg-zinc-900 text-zinc-300 p-2 rounded-xl transition-all border border-white/10 backdrop-blur-md cursor-pointer active:scale-95 shadow-lg"
+            className="bg-zinc-950/80 hover:bg-zinc-900 text-zinc-300 p-2.5 rounded-xl transition-all duration-200 border border-white/15 backdrop-blur-md cursor-pointer active:scale-95 shadow-xl hover:text-amber-300"
           >
             <RotateCcw size={16} />
           </button>
         </div>
 
         {/* Action Items Box */}
-        <div className={`${scale.box} flex flex-col gap-2 mt-4`}>
+        <div className={`${scale.box} flex flex-col gap-2 mt-4 transition-all duration-300`}>
           <div className="flex justify-between items-center px-1">
-            <span className="text-[10px] uppercase tracking-widest text-zinc-400 font-bold drop-shadow">
+            <span className="text-xs uppercase tracking-widest text-zinc-300 font-bold drop-shadow">
               Action Items
             </span>
-            <span className="text-[10px] text-zinc-400 font-mono">
+            <span className="text-xs text-zinc-400 font-mono font-medium">
               {tasks.filter(t => t.completed).length}/{tasks.length} Complete
             </span>
           </div>
 
-          <form onSubmit={addTask} className="flex gap-2">
+          {/* Compact Form */}
+          <form onSubmit={addTask} className="flex gap-1.5">
             <input
               type="text"
               placeholder="Add a task..."
               value={newTask}
               onChange={(e) => setNewTask(e.target.value)}
-              className={`bg-zinc-950/80 border border-white/15 rounded-xl px-4 ${scale.input} w-full focus:outline-none focus:border-amber-400 text-zinc-100 placeholder-zinc-500 backdrop-blur-md transition shadow-inner`}
+              className="bg-zinc-950/80 border border-white/15 rounded-xl px-3.5 py-2 text-sm font-medium w-full focus:outline-none focus:border-amber-400 text-zinc-100 placeholder-zinc-500 backdrop-blur-md transition shadow-inner"
             />
             <button
               type="submit"
-              className="bg-zinc-900/90 border border-white/15 px-3.5 rounded-xl hover:bg-zinc-800 text-zinc-300 transition cursor-pointer active:scale-95"
+              className="bg-zinc-900/90 border border-white/15 px-3.5 rounded-xl hover:bg-zinc-800 text-zinc-300 hover:text-amber-300 transition cursor-pointer active:scale-95 flex items-center justify-center shrink-0"
             >
               <Plus size={16} />
             </button>
           </form>
 
-          <div className="flex flex-col gap-1.5 max-h-44 overflow-y-auto mt-1 pr-1">
+          {/* Task Rows */}
+          <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto mt-0.5 pr-1">
             {tasks.length === 0 ? (
-              <p className="text-xs text-zinc-400 text-center py-2 italic drop-shadow">
+              <p className="text-xs text-zinc-400 text-center py-2.5 italic drop-shadow">
                 No active tasks. Add one above.
               </p>
             ) : (
               tasks.map((task) => (
                 <div
                   key={task.id}
-                  className="flex items-center justify-between bg-zinc-950/75 hover:bg-zinc-900/90 px-3.5 py-2 rounded-xl border border-white/10 backdrop-blur-md transition group"
+                  className="flex items-center justify-between bg-zinc-950/75 hover:bg-zinc-900/90 px-3.5 py-2.5 rounded-xl border border-white/10 backdrop-blur-md transition group"
                 >
                   <div className="flex items-center gap-2.5 flex-1 mr-2 overflow-hidden">
                     <button
@@ -630,7 +696,7 @@ export default function App() {
                           : 'border-zinc-500 hover:border-zinc-300'
                       }`}
                     >
-                      {task.completed && <Check size={10} strokeWidth={3} />}
+                      {task.completed && <Check size={11} strokeWidth={3} />}
                     </button>
 
                     {editingTaskId === task.id ? (
@@ -644,30 +710,32 @@ export default function App() {
                           if (e.key === 'Enter') saveEditedTask(task.id);
                           if (e.key === 'Escape') setEditingTaskId(null);
                         }}
-                        className={`bg-zinc-900 border border-amber-400 rounded-lg px-2 py-0.5 ${scale.text} text-zinc-100 focus:outline-none w-full`}
+                        className="bg-zinc-900 border border-amber-400 rounded-lg px-2 py-0.5 text-sm font-medium text-zinc-100 focus:outline-none w-full"
                       />
                     ) : (
                       <span
                         onDoubleClick={() => startEditing(task)}
                         title="Double-click to edit"
-                        className={`truncate cursor-pointer select-text ${scale.text} ${task.completed ? 'line-through text-zinc-500' : 'text-zinc-200'}`}
+                        className={`truncate cursor-pointer select-text text-sm font-medium ${
+                          task.completed ? 'line-through text-zinc-500' : 'text-zinc-100'
+                        }`}
                       >
                         {task.text}
                       </span>
                     )}
                   </div>
 
-                  <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition shrink-0">
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
                     <button
                       onClick={() => startEditing(task)}
-                      className="text-zinc-400 hover:text-amber-300 p-1 cursor-pointer"
+                      className="text-zinc-400 hover:text-amber-300 p-1 rounded hover:bg-zinc-800/60 transition cursor-pointer"
                       title="Edit task"
                     >
                       <Edit2 size={13} />
                     </button>
                     <button
                       onClick={() => deleteTask(task.id)}
-                      className="text-zinc-400 hover:text-red-400 p-1 cursor-pointer"
+                      className="text-zinc-400 hover:text-red-400 p-1 rounded hover:bg-zinc-800/60 transition cursor-pointer"
                       title="Delete task"
                     >
                       <Trash2 size={13} />
@@ -683,7 +751,7 @@ export default function App() {
       {/* Floating Modals & Dock Controls */}
       <footer className="fixed bottom-8 right-8 flex flex-col items-end gap-2 pointer-events-auto z-50">
         
-        {/* Fixed-Height, Smooth Transition Audio Deck */}
+        {/* Audio Deck */}
         {activeTab === 'music' && (
           <div className="w-[24.5rem] bg-zinc-950/95 border border-white/10 rounded-2xl p-5 backdrop-blur-xl shadow-2xl mb-2 flex flex-col gap-4 transition-all duration-300 ease-out">
             
@@ -694,7 +762,7 @@ export default function App() {
                 onClick={() => setActiveTab(null)} 
                 className="text-zinc-400 hover:text-zinc-200 p-1 rounded-lg hover:bg-zinc-800/60 transition cursor-pointer"
               >
-                <X size={16} />
+                <X size={15} />
               </button>
             </div>
 
@@ -702,7 +770,7 @@ export default function App() {
             <div className="grid grid-cols-2 gap-1.5 bg-zinc-900/80 p-1.5 rounded-xl border border-white/5">
               <button
                 onClick={() => setAudioMode('ambient')}
-                className={`py-2 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer text-center ${
+                className={`py-2 rounded-lg text-xs font-semibold transition-all duration-200 cursor-pointer text-center ${
                   audioMode === 'ambient' 
                     ? 'bg-[#FCD34D] text-zinc-950 shadow-md scale-[1.02]' 
                     : 'text-zinc-400 hover:text-white'
@@ -712,7 +780,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setAudioMode('youtube')}
-                className={`py-2 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer text-center ${
+                className={`py-2 rounded-lg text-xs font-semibold transition-all duration-200 cursor-pointer text-center ${
                   audioMode === 'youtube' 
                     ? 'bg-[#FCD34D] text-zinc-950 shadow-md scale-[1.02]' 
                     : 'text-zinc-400 hover:text-white'
@@ -722,10 +790,10 @@ export default function App() {
               </button>
             </div>
 
-            {/* Stable Height Viewport with Smooth Fade Transitions */}
-            <div className="min-h-[260px] flex flex-col justify-between transition-all duration-300">
+            {/* Stable Height Viewport */}
+            <div className="min-h-[265px] flex flex-col justify-between transition-all duration-300">
               {audioMode === 'ambient' ? (
-                <div className="flex flex-col gap-2.5 my-auto animate-fadeIn">
+                <div className="flex flex-col gap-2 my-auto animate-fadeIn">
                   {SOUNDS.map((sound) => (
                     <button
                       key={sound.id}
@@ -733,7 +801,7 @@ export default function App() {
                         stopYtStream();
                         setSelectedSound(selectedSound === sound.id ? null : sound.id);
                       }}
-                      className={`text-left px-4 py-3.5 rounded-xl text-sm font-medium transition-all duration-200 cursor-pointer flex justify-between items-center border ${
+                      className={`text-left px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 cursor-pointer flex justify-between items-center border ${
                         selectedSound === sound.id
                           ? 'bg-[#FCD34D] text-zinc-950 font-bold border-amber-400 shadow-md scale-[1.01]'
                           : 'bg-zinc-900/60 hover:bg-zinc-800 text-zinc-200 border-white/5'
@@ -741,7 +809,7 @@ export default function App() {
                     >
                       <span>{sound.name}</span>
                       {selectedSound === sound.id && (
-                        <span className="text-xs uppercase tracking-wider font-bold bg-zinc-950/20 px-2.5 py-0.5 rounded-md">
+                        <span className="text-[10px] uppercase tracking-wider font-bold bg-zinc-950/20 px-2.5 py-0.5 rounded-md">
                           Playing
                         </span>
                       )}
@@ -749,19 +817,19 @@ export default function App() {
                   ))}
                 </div>
               ) : (
-                <div className="flex flex-col gap-3 justify-between h-full animate-fadeIn">
+                <div className="flex flex-col gap-2.5 justify-between h-full animate-fadeIn">
                   
                   {/* Presets */}
                   <div className="flex flex-col gap-1.5">
-                    <span className="text-xs uppercase tracking-wider text-zinc-400 font-bold flex items-center gap-1.5">
-                      <Radio size={13} className="text-amber-400" /> Quick Stations
+                    <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold flex items-center gap-1">
+                      <Radio size={12} className="text-amber-400" /> Quick Stations
                     </span>
                     <div className="grid grid-cols-3 gap-1.5">
                       {YT_PRESETS.map((preset) => (
                         <button
                           key={preset.id}
                           onClick={() => startYouTubeStream(preset.id, preset.type === 'playlist')}
-                          className="bg-zinc-900/80 hover:bg-zinc-800 border border-white/5 py-2 rounded-lg text-xs text-zinc-200 truncate px-2 text-center transition cursor-pointer hover:border-amber-400/40"
+                          className="bg-zinc-900/80 hover:bg-zinc-800 border border-white/5 py-1.5 rounded-lg text-[11px] text-zinc-300 truncate px-2 text-center transition cursor-pointer hover:border-amber-400/40"
                           title={preset.name}
                         >
                           {preset.name}
@@ -777,67 +845,88 @@ export default function App() {
                       placeholder="Paste video or playlist URL..."
                       value={ytUrl}
                       onChange={(e) => setYtUrl(e.target.value)}
-                      className="bg-zinc-900/90 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs w-full focus:outline-none focus:border-amber-400 text-zinc-100 placeholder-zinc-500 shadow-inner"
+                      className="bg-zinc-900/90 border border-white/10 rounded-xl px-3 py-2 text-xs w-full focus:outline-none focus:border-amber-400 text-zinc-100 placeholder-zinc-500 shadow-inner"
                     />
                     <button
                       type="submit"
-                      className="bg-[#FCD34D] text-zinc-950 px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-[#fbbf24] transition cursor-pointer flex items-center gap-1.5 active:scale-95 shrink-0 shadow"
+                      className="bg-[#FCD34D] text-zinc-950 px-3.5 py-2 rounded-xl text-xs font-bold hover:bg-[#fbbf24] transition cursor-pointer flex items-center gap-1 active:scale-95 shrink-0 shadow"
                     >
-                      <Play size={13} fill="currentColor" /> Load
+                      <Play size={12} fill="currentColor" /> Load
                     </button>
                   </form>
 
-                  {/* Active Stream Transport Box (Preserves Height Placeholder) */}
-                  <div className={`bg-zinc-900/90 border border-white/10 rounded-xl p-3 flex flex-col gap-2.5 shadow-lg transition-all duration-200 ${ytState.isReady ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-                    <div className="text-xs text-amber-300 font-semibold truncate drop-shadow px-1">
+                  {/* Active Stream Transport with Draggable Seek Scrubber */}
+                  <div className={`bg-zinc-900/90 border border-white/10 rounded-xl p-3 flex flex-col gap-2 shadow-lg transition-all duration-200 ${ytState.isReady ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+                    <div className="text-xs text-amber-300 font-medium truncate drop-shadow px-1">
                       {ytState.isReady ? ytState.currentTitle : 'No active stream loaded'}
                     </div>
 
+                    {/* Interactive Progress / Scrubber Bar */}
+                    <div className="flex flex-col gap-1 px-1">
+                      <input
+                        type="range"
+                        min="0"
+                        max={duration || 100}
+                        step="1"
+                        value={currentTime}
+                        onChange={handleSeekChange}
+                        onMouseUp={handleSeekMouseUp}
+                        onTouchEnd={handleSeekMouseUp}
+                        disabled={!duration}
+                        className="w-full accent-amber-400 h-1.5 bg-zinc-800 rounded-lg cursor-pointer transition"
+                      />
+                      <div className="flex justify-between items-center text-[10px] text-zinc-400 font-mono px-0.5">
+                        <span>{formatAudioTime(currentTime)}</span>
+                        <span>{duration ? formatAudioTime(duration) : 'Live Stream'}</span>
+                      </div>
+                    </div>
+
+                    {/* Controls */}
                     <div className="flex items-center justify-between px-1">
                       <button 
                         onClick={prevYtTrack} 
-                        className="text-zinc-400 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition cursor-pointer"
+                        className="text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-zinc-800 transition cursor-pointer"
                         title="Previous in Playlist"
                       >
-                        <SkipBack size={17} />
+                        <SkipBack size={15} />
                       </button>
 
                       <button 
                         onClick={() => skipYtSeconds(-15)} 
-                        className="text-zinc-300 hover:text-amber-300 p-1.5 rounded-lg hover:bg-zinc-800 transition cursor-pointer flex items-center gap-0.5 text-xs font-medium"
+                        className="text-zinc-400 hover:text-amber-300 p-1 rounded-lg hover:bg-zinc-800 transition cursor-pointer flex items-center gap-0.5 text-[11px]"
                         title="Rewind 15 Seconds"
                       >
-                        <SkipBack15 size={15} /> -15s
+                        <SkipBack15 size={13} /> -15s
                       </button>
 
                       <button
                         onClick={toggleYtPlayback}
-                        className="bg-[#FCD34D] hover:bg-[#fbbf24] text-zinc-950 p-2.5 rounded-full transition cursor-pointer active:scale-95 shadow"
+                        className="bg-[#FCD34D] hover:bg-[#fbbf24] text-zinc-950 p-2 rounded-full transition cursor-pointer active:scale-95 shadow"
                         title={ytState.isPlaying ? 'Pause' : 'Resume'}
                       >
-                        {ytState.isPlaying ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" className="ml-0.5" />}
+                        {ytState.isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" className="ml-0.5" />}
                       </button>
 
                       <button 
                         onClick={() => skipYtSeconds(15)} 
-                        className="text-zinc-300 hover:text-amber-300 p-1.5 rounded-lg hover:bg-zinc-800 transition cursor-pointer flex items-center gap-0.5 text-xs font-medium"
+                        className="text-zinc-400 hover:text-amber-300 p-1 rounded-lg hover:bg-zinc-800 transition cursor-pointer flex items-center gap-0.5 text-[11px]"
                         title="Skip 15 Seconds"
                       >
-                        +15s <SkipFwd15 size={15} />
+                        +15s <SkipFwd15 size={13} />
                       </button>
 
                       <button 
                         onClick={nextYtTrack} 
-                        className="text-zinc-400 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition cursor-pointer"
+                        className="text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-zinc-800 transition cursor-pointer"
                         title="Next in Playlist"
                       >
-                        <SkipForward size={17} />
+                        <SkipForward size={15} />
                       </button>
                     </div>
 
                     <button
                       onClick={stopYtStream}
-                      className="text-xs text-zinc-500 hover:text-red-400 text-center transition cursor-pointer"
+                      className="text-[11px] text-zinc-500 hover:text-red-400 text-center transition cursor-pointer"
                     >
                       Eject Stream
                     </button>
@@ -847,8 +936,8 @@ export default function App() {
             </div>
 
             {/* Master Volume Bar */}
-            <div className="pt-2 flex items-center gap-3 border-t border-zinc-800/80">
-              <Volume2 size={16} className="text-zinc-400 shrink-0" />
+            <div className="pt-2 flex items-center gap-2.5 border-t border-zinc-800/80">
+              <Volume2 size={15} className="text-zinc-400 shrink-0" />
               <input
                 type="range"
                 min="0"
@@ -856,9 +945,9 @@ export default function App() {
                 step="0.02"
                 value={volume}
                 onChange={(e) => setVolume(parseFloat(e.target.value))}
-                className="w-full accent-amber-400 h-1.5 bg-zinc-800 rounded cursor-pointer"
+                className="w-full accent-amber-400 h-1 bg-zinc-800 rounded cursor-pointer"
               />
-              <span className="text-xs text-zinc-300 font-mono w-8 text-right font-medium">
+              <span className="text-xs text-zinc-400 font-mono w-7 text-right">
                 {Math.round(volume * 100)}%
               </span>
             </div>
