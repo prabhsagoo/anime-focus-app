@@ -2,7 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   RotateCcw, Plus, Music, Settings as SettingsIcon, 
   Volume2, Check, Trash2, Edit2, X, Image as ImageIcon,
-  Flame, Coffee, Upload, Zap, Move, Play, Square
+  Flame, Coffee, Upload, Zap, Move, Play, Pause,
+  RotateCcw as SkipBack15, RotateCw as SkipFwd15,
+  SkipForward, SkipBack, Radio
 } from 'lucide-react';
 
 const DEFAULT_WALLPAPERS = [
@@ -17,6 +19,12 @@ const SOUNDS = [
   { id: 'lofi', name: 'Lo-Fi Rain & Thunder', url: 'https://cdn.pixabay.com/download/audio/2022/05/16/audio_db6591201e.mp3?filename=rain-and-nostalgia-lofi-112347.mp3' },
   { id: 'ambient', name: 'Tokyo Night Drive', url: 'https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=chill-lofi-song-8444.mp3' },
   { id: 'brown', name: 'Deep Binaural Focus', url: 'https://cdn.pixabay.com/download/audio/2021/08/09/audio_88424c5229.mp3?filename=lofi-study-112191.mp3' }
+];
+
+const YT_PRESETS = [
+  { id: 'jfKfPfyJRdk', name: 'Lofi Girl 24/7', type: 'video' },
+  { id: '4xDzrJKXOOY', name: 'Synthwave Radio', type: 'video' },
+  { id: 'PLozT_Fq2yO7d6eK6R0K5m4N8h0S-fG8w1', name: 'Anime Chill Playlist', type: 'playlist' }
 ];
 
 const FONT_STYLES = {
@@ -43,21 +51,11 @@ const parseYouTubeUrl = (url) => {
   const videoId = videoMatch ? videoMatch[1] : null;
 
   if (playlistId) {
-    return {
-      type: 'playlist',
-      src: videoId 
-        ? `https://www.youtube.com/embed/${videoId}?list=${playlistId}&autoplay=1&loop=1&enablejsapi=1`
-        : `https://www.youtube.com/embed/videoseries?list=${playlistId}&autoplay=1&loop=1&enablejsapi=1`
-    };
+    return { type: 'playlist', targetId: playlistId, videoId: videoId };
   }
-
   if (videoId) {
-    return {
-      type: 'video',
-      src: `https://www.youtube.com/embed/${videoId}?autoplay=1&loop=1&playlist=${videoId}&enablejsapi=1`
-    };
+    return { type: 'video', targetId: videoId, videoId: videoId };
   }
-
   return null;
 };
 
@@ -105,29 +103,41 @@ export default function App() {
     } catch { return []; }
   });
 
+  // Pomodoro
   const [timeLeft, setTimeLeft] = useState(focusDuration * 60);
   const [isRunning, setIsRunning] = useState(false);
   const [isBreak, setIsBreak] = useState(false);
   
+  // Task Editing
   const [newTask, setNewTask] = useState('');
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskText, setEditingTaskText] = useState('');
   
+  // Audio & YouTube State
   const [activeTab, setActiveTab] = useState(null);
   const [audioMode, setAudioMode] = useState('ambient');
   const [selectedSound, setSelectedSound] = useState(null);
-  const [volume, setVolume] = useState(0.5);
+  const [volume, setVolume] = useState(0.6);
   const [ytUrl, setYtUrl] = useState('');
-  const [ytEmbedSrc, setYtEmbedSrc] = useState('');
-  const [isYtPlaying, setIsYtPlaying] = useState(false);
+  const [ytState, setYtState] = useState({ isPlaying: false, isReady: false, isPlaylist: false, currentTitle: '' });
 
   const audioRef = useRef(new Audio());
   const fileInputRef = useRef(null);
   const canvasRef = useRef(null);
   const widgetRef = useRef(null);
+  const ytPlayerRef = useRef(null);
   const isDraggingRef = useRef(false);
   const dragDataRef = useRef({ startX: 0, startY: 0, initX: 0, initY: 0, currentX: 0, currentY: 0 });
   const animFrameRef = useRef(null);
+
+  useEffect(() => {
+    if (!window.YT) {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    }
+  }, []);
 
   useEffect(() => {
     try {
@@ -141,7 +151,7 @@ export default function App() {
       localStorage.setItem('widgetPos', JSON.stringify(pos));
       localStorage.setItem('tasks', JSON.stringify(tasks));
     } catch (err) {
-      console.warn('LocalStorage quota guarded:', err);
+      console.warn('LocalStorage guarded:', err);
     }
   }, [focusDuration, breakDuration, uiScale, fontStyle, currentBg, enableParticles, layoutMode, pos, tasks]);
 
@@ -175,7 +185,114 @@ export default function App() {
 
   useEffect(() => {
     audioRef.current.volume = volume;
+    if (ytPlayerRef.current && typeof ytPlayerRef.current.setVolume === 'function') {
+      ytPlayerRef.current.setVolume(volume * 100);
+    }
   }, [volume]);
+
+  const startYouTubeStream = (targetId, isPlaylist) => {
+    setSelectedSound(null);
+    audioRef.current.pause();
+
+    if (!window.YT || !window.YT.Player) {
+      setTimeout(() => startYouTubeStream(targetId, isPlaylist), 400);
+      return;
+    }
+
+    if (ytPlayerRef.current && typeof ytPlayerRef.current.destroy === 'function') {
+      try { ytPlayerRef.current.destroy(); } catch (_) {}
+    }
+
+    setYtState({ isPlaying: false, isReady: false, isPlaylist: isPlaylist, currentTitle: 'Connecting...' });
+
+    const playerOptions = {
+      height: '180',
+      width: '260',
+      playerVars: {
+        autoplay: 1,
+        controls: 0,
+        disablekb: 1,
+        fs: 0,
+        modestbranding: 1,
+        rel: 0,
+        playsinline: 1
+      },
+      events: {
+        onReady: (event) => {
+          event.target.setVolume(volume * 100);
+          event.target.playVideo();
+          setYtState(prev => ({ 
+            ...prev, 
+            isReady: true, 
+            isPlaying: true, 
+            currentTitle: event.target.getVideoData()?.title || 'Streaming Audio'
+          }));
+        },
+        onStateChange: (event) => {
+          if (event.data === 1) {
+            setYtState(prev => ({ 
+              ...prev, 
+              isPlaying: true, 
+              currentTitle: event.target.getVideoData()?.title || prev.currentTitle 
+            }));
+          } else if (event.data === 2) {
+            setYtState(prev => ({ ...prev, isPlaying: false }));
+          }
+        }
+      }
+    };
+
+    if (isPlaylist) {
+      playerOptions.playerVars.listType = 'playlist';
+      playerOptions.playerVars.list = targetId;
+    } else {
+      playerOptions.videoId = targetId;
+    }
+
+    ytPlayerRef.current = new window.YT.Player('yt-embedded-instance', playerOptions);
+  };
+
+  const toggleYtPlayback = () => {
+    if (!ytPlayerRef.current || !ytState.isReady) return;
+    if (ytState.isPlaying) {
+      ytPlayerRef.current.pauseVideo();
+    } else {
+      ytPlayerRef.current.playVideo();
+    }
+  };
+
+  const skipYtSeconds = (seconds) => {
+    if (!ytPlayerRef.current || !ytState.isReady) return;
+    const current = ytPlayerRef.current.getCurrentTime() || 0;
+    ytPlayerRef.current.seekTo(Math.max(0, current + seconds), true);
+  };
+
+  const nextYtTrack = () => {
+    if (ytPlayerRef.current && ytState.isReady && typeof ytPlayerRef.current.nextVideo === 'function') {
+      ytPlayerRef.current.nextVideo();
+    }
+  };
+
+  const prevYtTrack = () => {
+    if (ytPlayerRef.current && ytState.isReady && typeof ytPlayerRef.current.previousVideo === 'function') {
+      ytPlayerRef.current.previousVideo();
+    }
+  };
+
+  const stopYtStream = () => {
+    if (ytPlayerRef.current && typeof ytPlayerRef.current.stopVideo === 'function') {
+      ytPlayerRef.current.stopVideo();
+    }
+    setYtState({ isPlaying: false, isReady: false, isPlaylist: false, currentTitle: '' });
+  };
+
+  const handlePlayYouTubeForm = (e) => {
+    e?.preventDefault();
+    const parsed = parseYouTubeUrl(ytUrl);
+    if (parsed) {
+      startYouTubeStream(parsed.targetId, parsed.type === 'playlist');
+    }
+  };
 
   const handleDragStart = (e) => {
     isDraggingRef.current = true;
@@ -338,16 +455,6 @@ export default function App() {
     }
   };
 
-  const handlePlayYouTube = (e) => {
-    e?.preventDefault();
-    const parsed = parseYouTubeUrl(ytUrl);
-    if (parsed) {
-      setSelectedSound(null);
-      setYtEmbedSrc(parsed.src);
-      setIsYtPlaying(true);
-    }
-  };
-
   const formatTime = (seconds) => {
     const mins = String(Math.floor(seconds / 60)).padStart(2, '0');
     const secs = String(seconds % 60).padStart(2, '0');
@@ -372,6 +479,7 @@ export default function App() {
   return (
     <div className="relative w-screen h-screen overflow-hidden select-none bg-transparent">
       
+      {/* Background Video/Image Layer */}
       {activeBg && activeBg.url && (
         <div className="absolute inset-0 overflow-hidden -z-20">
           {activeBg.type === 'video' ? (
@@ -394,28 +502,28 @@ export default function App() {
         </div>
       )}
 
+      {/* Rain Effect Canvas */}
       {enableParticles && (
         <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none -z-10" />
       )}
 
-      {ytEmbedSrc && isYtPlaying && (
-        <iframe
-    style={{
-      position: 'absolute',
-      left: '-9999px',
-      top: '-9999px',
-      width: '300px',
-      height: '200px',
-      visibility: 'visible',
-      opacity: 0.01,
-      pointerEvents: 'none'
-    }}
-    src={ytEmbedSrc}
-    title="YouTube Audio Stream"
-    allow="autoplay; encrypted-media; picture-in-picture"
-  />
-      )}
+      {/* Persistent Off-Screen YouTube Target */}
+      <div 
+        style={{
+          position: 'absolute',
+          left: '-9999px',
+          top: '-9999px',
+          width: '300px',
+          height: '200px',
+          visibility: 'visible',
+          opacity: 0.01,
+          pointerEvents: 'none'
+        }}
+      >
+        <div id="yt-embedded-instance" />
+      </div>
 
+      {/* Draggable HUD Container */}
       <div 
         ref={widgetRef}
         style={{
@@ -427,6 +535,7 @@ export default function App() {
         }}
         className="flex flex-col items-center select-none z-30 pointer-events-auto"
       >
+        {/* Drag Pill */}
         <div 
           onMouseDown={handleDragStart}
           className="flex items-center gap-2.5 bg-zinc-950/85 border border-white/15 px-4 py-1.5 rounded-full backdrop-blur-md shadow-2xl cursor-grab active:cursor-grabbing hover:border-amber-400/60 transition group mb-2"
@@ -446,10 +555,12 @@ export default function App() {
           )}
         </div>
 
+        {/* Digital Clock Display */}
         <h1 className={`${scale.clock} ${FONT_STYLES[fontStyle]} text-white drop-shadow-[0_8px_32px_rgba(0,0,0,0.95)] leading-none py-1`}>
           {formatTime(timeLeft)}
         </h1>
 
+        {/* Control Buttons */}
         <div className="flex gap-2.5 mt-3">
           <button
             onClick={toggleTimer}
@@ -466,6 +577,7 @@ export default function App() {
           </button>
         </div>
 
+        {/* Action Items Box */}
         <div className={`${scale.box} flex flex-col gap-2 mt-4`}>
           <div className="flex justify-between items-center px-1">
             <span className="text-[10px] uppercase tracking-widest text-zinc-400 font-bold drop-shadow">
@@ -568,115 +680,205 @@ export default function App() {
         </div>
       </div>
 
+      {/* Floating Modals & Dock Controls */}
       <footer className="fixed bottom-8 right-8 flex flex-col items-end gap-2 pointer-events-auto z-50">
         
+        {/* Fixed-Height, Smooth Transition Audio Deck */}
         {activeTab === 'music' && (
-          <div className="w-80 bg-zinc-950/95 border border-white/10 rounded-2xl p-4 backdrop-blur-xl shadow-2xl mb-2 flex flex-col gap-3">
+          <div className="w-[24.5rem] bg-zinc-950/95 border border-white/10 rounded-2xl p-5 backdrop-blur-xl shadow-2xl mb-2 flex flex-col gap-4 transition-all duration-300 ease-out">
             
-            <div className="flex justify-between items-center pb-1 border-b border-zinc-800/80">
-              <span className="text-xs uppercase tracking-wider font-bold text-zinc-400">Audio Deck</span>
-              <button onClick={() => setActiveTab(null)} className="text-zinc-400 hover:text-zinc-200 cursor-pointer">
-                <X size={14} />
+            {/* Header */}
+            <div className="flex justify-between items-center pb-2.5 border-b border-zinc-800">
+              <span className="text-sm uppercase tracking-wider font-bold text-zinc-300">Audio Deck</span>
+              <button 
+                onClick={() => setActiveTab(null)} 
+                className="text-zinc-400 hover:text-zinc-200 p-1 rounded-lg hover:bg-zinc-800/60 transition cursor-pointer"
+              >
+                <X size={16} />
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-1 bg-zinc-900/80 p-1 rounded-xl border border-white/5">
+            {/* Tab Switcher */}
+            <div className="grid grid-cols-2 gap-1.5 bg-zinc-900/80 p-1.5 rounded-xl border border-white/5">
               <button
                 onClick={() => setAudioMode('ambient')}
-                className={`py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                  audioMode === 'ambient' ? 'bg-[#FCD34D] text-zinc-950 shadow' : 'text-zinc-400 hover:text-white'
+                className={`py-2 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer text-center ${
+                  audioMode === 'ambient' 
+                    ? 'bg-[#FCD34D] text-zinc-950 shadow-md scale-[1.02]' 
+                    : 'text-zinc-400 hover:text-white'
                 }`}
               >
-                Ambient
+                Ambient Loops
               </button>
               <button
                 onClick={() => setAudioMode('youtube')}
-                className={`py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                  audioMode === 'youtube' ? 'bg-[#FCD34D] text-zinc-950 shadow' : 'text-zinc-400 hover:text-white'
+                className={`py-2 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer text-center ${
+                  audioMode === 'youtube' 
+                    ? 'bg-[#FCD34D] text-zinc-950 shadow-md scale-[1.02]' 
+                    : 'text-zinc-400 hover:text-white'
                 }`}
               >
-                YouTube
+                YouTube Player
               </button>
             </div>
 
-            {audioMode === 'ambient' ? (
-              <>
-                <div className="flex flex-col gap-1.5">
+            {/* Stable Height Viewport with Smooth Fade Transitions */}
+            <div className="min-h-[260px] flex flex-col justify-between transition-all duration-300">
+              {audioMode === 'ambient' ? (
+                <div className="flex flex-col gap-2.5 my-auto animate-fadeIn">
                   {SOUNDS.map((sound) => (
                     <button
                       key={sound.id}
                       onClick={() => {
-                        setIsYtPlaying(false);
+                        stopYtStream();
                         setSelectedSound(selectedSound === sound.id ? null : sound.id);
                       }}
-                      className={`text-left px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer flex justify-between items-center ${
+                      className={`text-left px-4 py-3.5 rounded-xl text-sm font-medium transition-all duration-200 cursor-pointer flex justify-between items-center border ${
                         selectedSound === sound.id
-                          ? 'bg-[#FCD34D] text-zinc-950 font-bold'
-                          : 'bg-zinc-900/60 hover:bg-zinc-800 text-zinc-300 border border-white/5'
+                          ? 'bg-[#FCD34D] text-zinc-950 font-bold border-amber-400 shadow-md scale-[1.01]'
+                          : 'bg-zinc-900/60 hover:bg-zinc-800 text-zinc-200 border-white/5'
                       }`}
                     >
                       <span>{sound.name}</span>
-                      {selectedSound === sound.id && <span className="text-[10px] uppercase tracking-wider">Playing</span>}
+                      {selectedSound === sound.id && (
+                        <span className="text-xs uppercase tracking-wider font-bold bg-zinc-950/20 px-2.5 py-0.5 rounded-md">
+                          Playing
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>
+              ) : (
+                <div className="flex flex-col gap-3 justify-between h-full animate-fadeIn">
+                  
+                  {/* Presets */}
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-xs uppercase tracking-wider text-zinc-400 font-bold flex items-center gap-1.5">
+                      <Radio size={13} className="text-amber-400" /> Quick Stations
+                    </span>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {YT_PRESETS.map((preset) => (
+                        <button
+                          key={preset.id}
+                          onClick={() => startYouTubeStream(preset.id, preset.type === 'playlist')}
+                          className="bg-zinc-900/80 hover:bg-zinc-800 border border-white/5 py-2 rounded-lg text-xs text-zinc-200 truncate px-2 text-center transition cursor-pointer hover:border-amber-400/40"
+                          title={preset.name}
+                        >
+                          {preset.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-                <div className="pt-2 flex items-center gap-2 border-t border-white/5">
-                  <Volume2 size={14} className="text-zinc-400" />
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={volume}
-                    onChange={(e) => setVolume(parseFloat(e.target.value))}
-                    className="w-full accent-amber-400 h-1 bg-zinc-800 rounded cursor-pointer"
-                  />
+                  {/* Search / Paste Form */}
+                  <form onSubmit={handlePlayYouTubeForm} className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Paste video or playlist URL..."
+                      value={ytUrl}
+                      onChange={(e) => setYtUrl(e.target.value)}
+                      className="bg-zinc-900/90 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs w-full focus:outline-none focus:border-amber-400 text-zinc-100 placeholder-zinc-500 shadow-inner"
+                    />
+                    <button
+                      type="submit"
+                      className="bg-[#FCD34D] text-zinc-950 px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-[#fbbf24] transition cursor-pointer flex items-center gap-1.5 active:scale-95 shrink-0 shadow"
+                    >
+                      <Play size={13} fill="currentColor" /> Load
+                    </button>
+                  </form>
+
+                  {/* Active Stream Transport Box (Preserves Height Placeholder) */}
+                  <div className={`bg-zinc-900/90 border border-white/10 rounded-xl p-3 flex flex-col gap-2.5 shadow-lg transition-all duration-200 ${ytState.isReady ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+                    <div className="text-xs text-amber-300 font-semibold truncate drop-shadow px-1">
+                      {ytState.isReady ? ytState.currentTitle : 'No active stream loaded'}
+                    </div>
+
+                    <div className="flex items-center justify-between px-1">
+                      <button 
+                        onClick={prevYtTrack} 
+                        className="text-zinc-400 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition cursor-pointer"
+                        title="Previous in Playlist"
+                      >
+                        <SkipBack size={17} />
+                      </button>
+
+                      <button 
+                        onClick={() => skipYtSeconds(-15)} 
+                        className="text-zinc-300 hover:text-amber-300 p-1.5 rounded-lg hover:bg-zinc-800 transition cursor-pointer flex items-center gap-0.5 text-xs font-medium"
+                        title="Rewind 15 Seconds"
+                      >
+                        <SkipBack15 size={15} /> -15s
+                      </button>
+
+                      <button
+                        onClick={toggleYtPlayback}
+                        className="bg-[#FCD34D] hover:bg-[#fbbf24] text-zinc-950 p-2.5 rounded-full transition cursor-pointer active:scale-95 shadow"
+                        title={ytState.isPlaying ? 'Pause' : 'Resume'}
+                      >
+                        {ytState.isPlaying ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" className="ml-0.5" />}
+                      </button>
+
+                      <button 
+                        onClick={() => skipYtSeconds(15)} 
+                        className="text-zinc-300 hover:text-amber-300 p-1.5 rounded-lg hover:bg-zinc-800 transition cursor-pointer flex items-center gap-0.5 text-xs font-medium"
+                        title="Skip 15 Seconds"
+                      >
+                        +15s <SkipFwd15 size={15} />
+                      </button>
+
+                      <button 
+                        onClick={nextYtTrack} 
+                        className="text-zinc-400 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition cursor-pointer"
+                        title="Next in Playlist"
+                      >
+                        <SkipForward size={17} />
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={stopYtStream}
+                      className="text-xs text-zinc-500 hover:text-red-400 text-center transition cursor-pointer"
+                    >
+                      Eject Stream
+                    </button>
+                  </div>
                 </div>
-              </>
-            ) : (
-              <div className="flex flex-col gap-2">
-                <form onSubmit={handlePlayYouTube} className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="Paste video or playlist URL..."
-                    value={ytUrl}
-                    onChange={(e) => setYtUrl(e.target.value)}
-                    className="bg-zinc-900/90 border border-white/10 rounded-xl px-3 py-2 text-xs w-full focus:outline-none focus:border-amber-400 text-zinc-100 placeholder-zinc-500"
-                  />
-                  <button
-                    type="submit"
-                    className="bg-[#FCD34D] text-zinc-950 px-3.5 py-2 rounded-xl text-xs font-bold hover:bg-[#fbbf24] transition cursor-pointer flex items-center gap-1 active:scale-95"
-                  >
-                    <Play size={12} fill="currentColor" /> Play
-                  </button>
-                </form>
+              )}
+            </div>
 
-                {isYtPlaying && (
-                  <button
-                    onClick={() => {
-                      setIsYtPlaying(false);
-                      setYtEmbedSrc('');
-                    }}
-                    className="text-xs text-red-400 hover:text-red-300 py-1.5 text-center bg-red-950/30 border border-red-900/40 rounded-xl cursor-pointer flex items-center justify-center gap-1.5 transition active:scale-95"
-                  >
-                    <Square size={12} fill="currentColor" /> Stop Stream
-                  </button>
-                )}
-              </div>
-            )}
+            {/* Master Volume Bar */}
+            <div className="pt-2 flex items-center gap-3 border-t border-zinc-800/80">
+              <Volume2 size={16} className="text-zinc-400 shrink-0" />
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.02"
+                value={volume}
+                onChange={(e) => setVolume(parseFloat(e.target.value))}
+                className="w-full accent-amber-400 h-1.5 bg-zinc-800 rounded cursor-pointer"
+              />
+              <span className="text-xs text-zinc-300 font-mono w-8 text-right font-medium">
+                {Math.round(volume * 100)}%
+              </span>
+            </div>
           </div>
         )}
 
+        {/* Settings Modal */}
         {activeTab === 'settings' && (
-          <div className="w-84 bg-zinc-950/95 border border-white/10 rounded-2xl p-5 backdrop-blur-xl shadow-2xl mb-2 flex flex-col gap-4 max-h-[80vh] overflow-y-auto">
+          <div className="w-[24.5rem] bg-zinc-950/95 border border-white/10 rounded-2xl p-5 backdrop-blur-xl shadow-2xl mb-2 flex flex-col gap-4 max-h-[80vh] overflow-y-auto">
             <div className="flex justify-between items-center pb-2 border-b border-zinc-800">
               <span className="text-xs uppercase tracking-wider font-bold text-zinc-400">App Customization</span>
-              <button onClick={() => setActiveTab(null)} className="text-zinc-400 hover:text-zinc-200 cursor-pointer">
+              <button 
+                onClick={() => setActiveTab(null)} 
+                className="text-zinc-400 hover:text-zinc-200 p-1 rounded-lg hover:bg-zinc-800/60 transition cursor-pointer"
+              >
                 <X size={14} />
               </button>
             </div>
 
+            {/* Presets */}
             <div className="flex flex-col gap-1.5">
               <span className="text-xs text-zinc-300 font-medium">Widget Placement</span>
               <div className="grid grid-cols-3 gap-1 bg-zinc-900/80 p-1 rounded-xl border border-white/5">
@@ -698,6 +900,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* Rain Overlay */}
             <div className="flex items-center justify-between bg-zinc-900/80 p-2.5 rounded-xl border border-white/5">
               <div className="flex items-center gap-2">
                 <Zap size={14} className="text-amber-400" />
@@ -713,6 +916,7 @@ export default function App() {
               </button>
             </div>
 
+            {/* Sizing & Typography */}
             <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-1.5">
                 <span className="text-xs text-zinc-300 font-medium">UI Sizing Scale</span>
@@ -749,6 +953,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* Wallpapers */}
             <div className="flex flex-col gap-2">
               <div className="flex justify-between items-center text-xs text-zinc-300 font-medium">
                 <div className="flex items-center gap-1.5">
@@ -818,6 +1023,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* Focus Interval */}
             <div className="flex flex-col gap-1.5">
               <div className="flex justify-between text-xs text-zinc-300">
                 <span>Focus Interval</span>
@@ -837,6 +1043,7 @@ export default function App() {
               />
             </div>
 
+            {/* Break Interval */}
             <div className="flex flex-col gap-1.5">
               <div className="flex justify-between text-xs text-zinc-300">
                 <span>Break Interval</span>
@@ -856,6 +1063,7 @@ export default function App() {
               />
             </div>
 
+            {/* Quick Add Minutes */}
             <div className="flex flex-col gap-1.5 pt-1">
               <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Add Extra Minutes</span>
               <div className="flex gap-2">
@@ -873,6 +1081,7 @@ export default function App() {
           </div>
         )}
 
+        {/* Action Dock */}
         <div className="flex items-center bg-zinc-950/80 border border-white/10 rounded-2xl p-1 gap-1 backdrop-blur-md shadow-2xl">
           <button
             onClick={() => setActiveTab(activeTab === 'music' ? null : 'music')}
