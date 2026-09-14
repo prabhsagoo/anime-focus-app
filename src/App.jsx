@@ -8,11 +8,31 @@ import {
 } from 'lucide-react';
 
 const DEFAULT_WALLPAPERS = [
-  { id: 'none', name: 'Transparent (Desktop)', url: '', type: 'none' },
-  { id: 'zenitsu-rain', name: 'Zenitsu Storm 4K (Live)', url: 'https://assets.mixkit.co/videos/preview/mixkit-thunderstorm-with-lightning-in-the-night-sky-41544-large.mp4', type: 'video' },
-  { id: 'cyberpunk-city', name: 'Cyber Neon 8K', url: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=3840&auto=format&fit=crop', type: 'image' },
-  { id: 'shrine-rain', name: 'Tokyo Rain 8K', url: 'https://images.unsplash.com/photo-1514565131-fce0801e5785?q=80&w=3840&auto=format&fit=crop', type: 'image' },
-  { id: 'cosmic-flow', name: 'Anime Cosmos 8K', url: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=3840&auto=format&fit=crop', type: 'image' }
+  { id: 'none', name: 'Transparent', url: '', type: 'none' },
+  { 
+    id: 'jujutsu-kaisen', 
+    name: 'Jujutsu Kaisen', 
+    url: '/wallpapers/Jujutsu%20Kaisen.mp4', 
+    type: 'video' 
+  },
+  { 
+    id: 'car', 
+    name: 'Car', 
+    url: '/wallpapers/Car.png', 
+    type: 'image' 
+  },
+  { 
+    id: 'light', 
+    name: 'Light', 
+    url: '/wallpapers/Light.png', 
+    type: 'image' 
+  },
+  { 
+    id: 'skull', 
+    name: 'Skull', 
+    url: '/wallpapers/Skull.png', 
+    type: 'image' 
+  }
 ];
 
 const SOUNDS = [
@@ -88,11 +108,11 @@ export default function App() {
   });
   
   const [currentBg, setCurrentBg] = useState(() => {
-    try { 
-      const bg = localStorage.getItem('currentBg');
-      return bg === 'custom' ? 'none' : (bg || 'none'); 
-    } catch { return 'none'; }
-  });
+  try { 
+    const bg = localStorage.getItem('currentBg');
+    return bg === 'custom' ? 'jujutsu-kaisen' : (bg || 'jujutsu-kaisen'); 
+  } catch { return 'jujutsu-kaisen'; }
+});
   
   const [customBg, setCustomBg] = useState('');
   const [customBgType, setCustomBgType] = useState('image');
