@@ -1,43 +1,107 @@
-import { app, BrowserWindow, screen } from 'electron';
+import { app, BrowserWindow, Tray, Menu, ipcMain } from 'electron';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-let mainWindow;
+let mainWindow = null;
+let tray = null;
+
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 function createWindow() {
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width, height } = primaryDisplay.workAreaSize;
-
   mainWindow = new BrowserWindow({
-    width: width,
-    height: height,
-    x: 0,
-    y: 0,
+    width: 1920,
+    height: 1080,
+    fullscreen: true,
     transparent: true,
     frame: false,
     hasShadow: false,
+    skipTaskbar: true,
     alwaysOnTop: false,
-    resizable: false,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
-    },
+      webSecurity: false
+    }
   });
 
-  const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
-
-  if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
-  } else {
+  const devUrl = 'http://localhost:5173';
+  mainWindow.loadURL(devUrl).catch(() => {
     mainWindow.loadFile(path.join(__dirname, 'dist/index.html'));
-  }
+  });
+
+  // Dynamic Click-Through IPC Handler
+  ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed()) {
+      win.setIgnoreMouseEvents(ignore, options);
+    }
+  });
+
+  createTray();
 }
-app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
+function createTray() {
+  let iconPath = path.join(__dirname, 'public/favicon.ico');
+  if (!fs.existsSync(iconPath)) {
+    iconPath = path.join(__dirname, 'public/wallpapers/Car.png');
+  }
+
+  try {
+    tray = new Tray(iconPath);
+  } catch {
+    return;
+  }
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Focus Dashboard',
+      enabled: false
+    },
+    { type: 'separator' },
+    {
+      label: 'Show / Bring to Front',
+      click: () => {
+        if (mainWindow) {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      }
+    },
+    {
+      label: 'Toggle DevTools',
+      click: () => {
+        if (mainWindow) mainWindow.webContents.toggleDevTools();
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit Focus Dashboard',
+      click: () => {
+        app.isQuitting = true;
+        app.quit();
+      }
+    }
+  ]);
+
+  tray.setToolTip('Anime Focus Dashboard');
+  tray.setContextMenu(contextMenu);
+
+  tray.on('double-click', () => {
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
+
 app.whenReady().then(createWindow);
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+app.on('window-all-closed', (e) => {
+  if (!app.isQuitting) {
+    e.preventDefault();
+  }
 });

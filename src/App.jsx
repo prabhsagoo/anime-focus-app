@@ -7,6 +7,8 @@ import {
   SkipForward, SkipBack, Radio
 } from 'lucide-react';
 
+const { ipcRenderer } = window.require ? window.require('electron') : {};
+
 const DEFAULT_WALLPAPERS = [
   { id: 'none', name: 'Transparent', url: '', type: 'none' },
   { 
@@ -79,7 +81,6 @@ const parseYouTubeUrl = (url) => {
   return null;
 };
 
-// Format seconds into MM:SS or HH:MM:SS
 const formatAudioTime = (sec) => {
   if (!sec || isNaN(sec)) return '0:00';
   const totalSeconds = Math.floor(sec);
@@ -108,11 +109,11 @@ export default function App() {
   });
   
   const [currentBg, setCurrentBg] = useState(() => {
-  try { 
-    const bg = localStorage.getItem('currentBg');
-    return bg === 'custom' ? 'jujutsu-kaisen' : (bg || 'jujutsu-kaisen'); 
-  } catch { return 'jujutsu-kaisen'; }
-});
+    try { 
+      const bg = localStorage.getItem('currentBg');
+      return bg === 'custom' ? 'jujutsu-kaisen' : (bg || 'jujutsu-kaisen'); 
+    } catch { return 'jujutsu-kaisen'; }
+  });
   
   const [customBg, setCustomBg] = useState('');
   const [customBgType, setCustomBgType] = useState('image');
@@ -155,7 +156,7 @@ export default function App() {
   const [ytUrl, setYtUrl] = useState('');
   const [ytState, setYtState] = useState({ isPlaying: false, isReady: false, isPlaylist: false, currentTitle: '' });
   
-  // Draggable Seeking Progress State
+  // Seeking Progress State
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
@@ -168,6 +169,17 @@ export default function App() {
   const isDraggingRef = useRef(false);
   const dragDataRef = useRef({ startX: 0, startY: 0, initX: 0, initY: 0, currentX: 0, currentY: 0 });
   const animFrameRef = useRef(null);
+
+  // Dynamic Click-Through Helper
+  const setInteractive = (interactive) => {
+    if (ipcRenderer) {
+      if (interactive) {
+        ipcRenderer.send('set-ignore-mouse-events', false);
+      } else {
+        ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+      }
+    }
+  };
 
   useEffect(() => {
     if (!window.YT) {
@@ -229,7 +241,6 @@ export default function App() {
     }
   }, [volume]);
 
-  // Live Position / Duration Poller
   useEffect(() => {
     let interval;
     if (ytState.isPlaying && ytState.isReady && !isSeeking) {
@@ -553,11 +564,13 @@ export default function App() {
   };
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden select-none bg-transparent">
-      
+    <div 
+      onMouseEnter={() => setInteractive(false)}
+      className="relative w-screen h-screen overflow-hidden select-none bg-transparent"
+    >
       {/* Background Video/Image Layer */}
       {activeBg && activeBg.url && (
-        <div className="absolute inset-0 overflow-hidden -z-20">
+        <div className="absolute inset-0 overflow-hidden -z-20 pointer-events-none">
           {activeBg.type === 'video' ? (
             <video
               key={activeBg.url}
@@ -602,6 +615,8 @@ export default function App() {
       {/* Draggable HUD Container */}
       <div 
         ref={widgetRef}
+        onMouseEnter={() => setInteractive(true)}
+        onMouseLeave={() => setInteractive(false)}
         style={{
           position: 'absolute',
           top: 0,
@@ -672,7 +687,6 @@ export default function App() {
             </span>
           </div>
 
-          {/* Compact Form */}
           <form onSubmit={addTask} className="flex gap-1.5">
             <input
               type="text"
@@ -689,7 +703,6 @@ export default function App() {
             </button>
           </form>
 
-          {/* Task Rows */}
           <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto mt-0.5 pr-1">
             {tasks.length === 0 ? (
               <p className="text-xs text-zinc-400 text-center py-2.5 italic drop-shadow">
@@ -769,12 +782,14 @@ export default function App() {
       </div>
 
       {/* Floating Modals & Dock Controls */}
-      <footer className="fixed bottom-8 right-8 flex flex-col items-end gap-2 pointer-events-auto z-50">
-        
+      <footer 
+        onMouseEnter={() => setInteractive(true)}
+        onMouseLeave={() => setInteractive(false)}
+        className="fixed bottom-8 right-8 flex flex-col items-end gap-2 pointer-events-auto z-50"
+      >
         {/* Audio Deck */}
         {activeTab === 'music' && (
           <div className="w-[24.5rem] bg-zinc-950/95 border border-white/10 rounded-2xl p-5 backdrop-blur-xl shadow-2xl mb-2 flex flex-col gap-4 transition-all duration-300 ease-out">
-            
             {/* Header */}
             <div className="flex justify-between items-center pb-2.5 border-b border-zinc-800">
               <span className="text-sm uppercase tracking-wider font-bold text-zinc-300">Audio Deck</span>
@@ -810,7 +825,7 @@ export default function App() {
               </button>
             </div>
 
-            {/* Stable Height Viewport */}
+            {/* Viewport */}
             <div className="min-h-[265px] flex flex-col justify-between transition-all duration-300">
               {audioMode === 'ambient' ? (
                 <div className="flex flex-col gap-2 my-auto animate-fadeIn">
@@ -838,7 +853,6 @@ export default function App() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-2.5 justify-between h-full animate-fadeIn">
-                  
                   {/* Presets */}
                   <div className="flex flex-col gap-1.5">
                     <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold flex items-center gap-1">
@@ -858,7 +872,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Search / Paste Form */}
+                  {/* Input Form */}
                   <form onSubmit={handlePlayYouTubeForm} className="flex gap-2">
                     <input
                       type="text"
@@ -875,13 +889,12 @@ export default function App() {
                     </button>
                   </form>
 
-                  {/* Active Stream Transport with Draggable Seek Scrubber */}
+                  {/* Active Stream Transport with Scrubber */}
                   <div className={`bg-zinc-900/90 border border-white/10 rounded-xl p-3 flex flex-col gap-2 shadow-lg transition-all duration-200 ${ytState.isReady ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
                     <div className="text-xs text-amber-300 font-medium truncate drop-shadow px-1">
                       {ytState.isReady ? ytState.currentTitle : 'No active stream loaded'}
                     </div>
 
-                    {/* Interactive Progress / Scrubber Bar */}
                     <div className="flex flex-col gap-1 px-1">
                       <input
                         type="range"
@@ -901,7 +914,6 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Controls */}
                     <div className="flex items-center justify-between px-1">
                       <button 
                         onClick={prevYtTrack} 
@@ -987,7 +999,7 @@ export default function App() {
               </button>
             </div>
 
-            {/* Presets */}
+            {/* Placement */}
             <div className="flex flex-col gap-1.5">
               <span className="text-xs text-zinc-300 font-medium">Widget Placement</span>
               <div className="grid grid-cols-3 gap-1 bg-zinc-900/80 p-1 rounded-xl border border-white/5">
@@ -1009,7 +1021,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Rain Overlay */}
+            {/* Lightning Rain */}
             <div className="flex items-center justify-between bg-zinc-900/80 p-2.5 rounded-xl border border-white/5">
               <div className="flex items-center gap-2">
                 <Zap size={14} className="text-amber-400" />
@@ -1025,7 +1037,7 @@ export default function App() {
               </button>
             </div>
 
-            {/* Sizing & Typography */}
+            {/* Sizing Scale */}
             <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-1.5">
                 <span className="text-xs text-zinc-300 font-medium">UI Sizing Scale</span>
@@ -1062,7 +1074,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Wallpapers */}
+            {/* Backdrops */}
             <div className="flex flex-col gap-2">
               <div className="flex justify-between items-center text-xs text-zinc-300 font-medium">
                 <div className="flex items-center gap-1.5">
