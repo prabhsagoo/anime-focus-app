@@ -1,16 +1,66 @@
-# React + Vite
+# Anime Focus Dashboard ????
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A sleek, ambient desktop focus application designed for deep work, study sessions, and flow state. Built with Electron, React, and Tailwind CSS.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## ? Features
 
-## React Compiler
+* **Custom Pomodoro Timer & Live Clock**: Full customizable intervals (Focus & Break modes), quick time extension buttons, and a real-time HUD clock with precision seconds.
+* **Ambient Audio & YouTube Player**:
+  * Integrated background ambient sound loops (Lo-Fi rain, binaural beats, night drives).
+  * Native YouTube stream/playlist player with full playback control, ad bypass, volume snapping, and scrubber seeking.
+* **Dynamic Backdrop Themes**:
+  * Seamless MP4 live-animated wallpapers and curated static anime backdrops.
+  * Custom media file upload support (.mp4, .webm, images).
+  * Transparent desktop mode to interact with desktop icons while keeping HUD widgets pinned.
+* **Action Items & Task Tracker**: Built-in interactive to-do manager with inline task editing, checkoffs, and persistence.
+* **Customization & Controls**:
+  * Draggable HUD widgets with smooth free-drag and snapping presets (Top, Center, Custom).
+  * Canvas particle rain & lightning overlay toggles.
+  * UI scaling (sm, md, lg, xl) and typography options (mono, sans, serif).
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the ESLint configuration
+## ??? Tech Stack
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+* **Framework**: Electron
+* **Frontend**: React + Vite
+* **Styling**: Tailwind CSS
+* **Icons**: Lucide React
+* **Audio Engine**: Embedded YouTube Player Engine & HTML5 Audio with local Range Request streaming
+
+---
+
+## ?? Getting Started
+
+### Prerequisites
+
+Ensure you have Node.js installed (v18+ recommended).
+
+### Installation
+
+1. Clone the repository:
+   git clone https://github.com/prabhsagoo/anime-focus-app.git
+   cd anime-focus-app
+
+2. Install dependencies:
+   npm install
+
+3. Run in development mode:
+   npm run electron:dev
+
+---
+
+## ?? Building for Production
+
+To compile and package the standalone Windows executable (.exe):
+   npm run electron:build
+
+The compiled binaries will be output to the dist-electron/ folder.
+
+---
+
+## ?? License
+
+This project is licensed under the MIT License.
