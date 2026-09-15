@@ -162,7 +162,7 @@ export default function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [isBreak, setIsBreak] = useState(false);
   
-  // Real-time Clock State
+  // Real-time Clock State (With Seconds)
   const [realTime, setRealTime] = useState(() => new Date());
 
   // Task Editing State
@@ -170,7 +170,7 @@ export default function App() {
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskText, setEditingTaskText] = useState('');
   
-  // Audio & YouTube Player State
+  // Audio & YouTube State
   const [activeTab, setActiveTab] = useState(null);
   const [audioMode, setAudioMode] = useState('ambient');
   const [selectedSound, setSelectedSound] = useState(null);
@@ -189,7 +189,6 @@ export default function App() {
   const fileInputRef = useRef(null);
   const canvasRef = useRef(null);
   const widgetRef = useRef(null);
-  const ytPlayerRef = useRef(null);
   const isDraggingRef = useRef(false);
   const dragDataRef = useRef({ startX: 0, startY: 0, initX: 0, initY: 0, currentX: 0, currentY: 0 });
   const animFrameRef = useRef(null);
@@ -204,16 +203,6 @@ export default function App() {
     }
   };
 
-  // Load YouTube IFrame API Script
-  useEffect(() => {
-    if (!window.YT) {
-      const tag = document.createElement('script');
-      tag.src = 'https://www.youtube.com/iframe_api';
-      const firstScriptTag = document.getElementsByTagName('script')[0];
-      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-    }
-  }, []);
-
   // Live Clock Ticker
   useEffect(() => {
     const timer = setInterval(() => setRealTime(new Date()), 1000);
@@ -221,38 +210,37 @@ export default function App() {
   }, []);
 
   const formatClockTime = (date) => {
-  return date.toLocaleTimeString([], { 
-    hour: '2-digit', 
-    minute: '2-digit', 
-    second: '2-digit', 
-    hour12: false 
-  });
-};
+    return date.toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit', 
+      second: '2-digit', 
+      hour12: false 
+    });
+  };
 
-  // Synchronize Player Stats & Time
+  // Synchronize stats & scraped title from Electron background engine
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
-        const player = ytPlayerRef.current;
-        const cur = player.getCurrentTime() || 0;
-        const dur = player.getDuration() || 0;
-        
-        if (!isSeeking) {
-          setCurrentTime(cur);
-          setDuration(dur);
+    if (ipcRenderer) {
+      const handleStats = (event, stats) => {
+        if (!stats) return;
+        if (!isSeeking && typeof stats.currentTime === 'number') {
+          setCurrentTime(stats.currentTime);
         }
+        if (typeof stats.duration === 'number' && stats.duration > 0) {
+          setDuration(stats.duration);
+        }
+        setYtState(prev => ({
+          ...prev,
+          isPlaying: typeof stats.paused === 'boolean' ? !stats.paused : prev.isPlaying,
+          isReady: true,
+          currentTitle: stats.title || prev.currentTitle || 'Streaming Audio'
+        }));
+      };
 
-        try {
-          const videoData = player.getVideoData();
-          if (videoData && videoData.title && videoData.title !== ytState.currentTitle) {
-            setYtState(prev => ({ ...prev, currentTitle: videoData.title }));
-          }
-        } catch (_) {}
-      }
-    }, 400);
-
-    return () => clearInterval(interval);
-  }, [isSeeking, ytState.currentTitle]);
+      ipcRenderer.on('yt-stats-update', handleStats);
+      return () => ipcRenderer.removeListener('yt-stats-update', handleStats);
+    }
+  }, [isSeeking]);
 
   useEffect(() => {
     try {
@@ -292,6 +280,7 @@ export default function App() {
         audioRef.current.src = track.url;
         audioRef.current.loop = true;
         audioRef.current.volume = volume;
+        audioRef.current.muted = volume === 0;
         audioRef.current.play().catch(() => {});
       }
     } else {
@@ -301,134 +290,63 @@ export default function App() {
   }, [selectedSound, audioMode]);
 
   // Volume Controller
-  // Strict Mute & Volume Controller
-useEffect(() => {
-  // 1. Ambient Audio Element
-  if (audioRef.current) {
-    audioRef.current.volume = volume;
-    audioRef.current.muted = volume === 0;
-  }
-
-  // 2. YouTube Engine Player
-  if (ytPlayerRef.current && typeof ytPlayerRef.current.setVolume === 'function') {
-    if (volume === 0) {
-      ytPlayerRef.current.setVolume(0);
-      ytPlayerRef.current.mute();
-    } else {
-      ytPlayerRef.current.unMute();
-      ytPlayerRef.current.setVolume(Math.round(volume * 100));
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = volume;
+      audioRef.current.muted = volume === 0;
     }
-  }
-}, [volume]);
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-volume', volume === 0 ? 0 : volume);
+    }
+  }, [volume]);
 
-  // Direct YouTube Player Execution
   const startYouTubeStream = (targetId, isPlaylist = false, customTitle = '') => {
     setSelectedSound(null);
     if (audioRef.current) audioRef.current.pause();
 
     const matched = YT_PRESETS.find(p => p.id === targetId);
-    const title = customTitle || (matched ? matched.title : 'Connecting...');
+    const title = customTitle || (matched ? matched.title : 'Live Focus Stream');
 
     setYtActiveId(targetId);
     setYtState({ isPlaying: true, isReady: true, currentTitle: title });
     setCurrentTime(0);
     setDuration(0);
 
-    const initPlayer = () => {
-      if (!window.YT || !window.YT.Player) {
-        setTimeout(initPlayer, 200);
-        return;
-      }
-
-      if (ytPlayerRef.current && typeof ytPlayerRef.current.destroy === 'function') {
-        try { ytPlayerRef.current.destroy(); } catch (_) {}
-      }
-
-      const playerVars = {
-        autoplay: 1,
-        controls: 0,
-        disablekb: 1,
-        fs: 0,
-        rel: 0,
-        enablejsapi: 1,
-        origin: window.location.origin
-      };
-
-      const playerConfig = {
-        height: '180',
-        width: '320',
-        playerVars: playerVars,
-        events: {
-          onReady: (event) => {
-            event.target.setVolume(volume * 100);
-            event.target.unMute();
-            event.target.playVideo();
-            setYtState(prev => ({
-              ...prev,
-              isPlaying: true,
-              isReady: true,
-              currentTitle: event.target.getVideoData()?.title || title
-            }));
-          },
-          onStateChange: (event) => {
-            // State 1 = Playing, State 2 = Paused, State 0 = Ended
-            if (event.data === 1) {
-              setYtState(prev => ({
-                ...prev,
-                isPlaying: true,
-                currentTitle: event.target.getVideoData()?.title || prev.currentTitle
-              }));
-            } else if (event.data === 2) {
-              setYtState(prev => ({ ...prev, isPlaying: false }));
-            } else if (event.data === 0 && isPlaylist) {
-              event.target.nextVideo();
-            }
-          }
-        }
-      };
-
-      if (isPlaylist) {
-        playerConfig.playerVars.listType = 'playlist';
-        playerConfig.playerVars.list = targetId;
-      } else {
-        playerConfig.videoId = targetId;
-      }
-
-      ytPlayerRef.current = new window.YT.Player('yt-native-engine', playerConfig);
-    };
-
-    initPlayer();
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-play-id', {
+        targetId: targetId,
+        isPlaylist: isPlaylist,
+        volume: volume
+      });
+    }
   };
 
   const toggleYtPlayback = () => {
-    if (!ytPlayerRef.current || typeof ytPlayerRef.current.getPlayerState !== 'function') return;
-    const state = ytPlayerRef.current.getPlayerState();
-    if (state === 1) {
-      ytPlayerRef.current.pauseVideo();
-      setYtState(prev => ({ ...prev, isPlaying: false }));
-    } else {
-      ytPlayerRef.current.playVideo();
-      setYtState(prev => ({ ...prev, isPlaying: true }));
+    if (!ytActiveId) return;
+    const nextState = !ytState.isPlaying;
+    setYtState(prev => ({ ...prev, isPlaying: nextState }));
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-toggle-play', nextState);
     }
   };
 
   const skipYtSeconds = (seconds) => {
-    if (!ytPlayerRef.current || typeof ytPlayerRef.current.getCurrentTime !== 'function') return;
-    const current = ytPlayerRef.current.getCurrentTime() || 0;
-    const target = Math.max(0, current + seconds);
-    ytPlayerRef.current.seekTo(target, true);
-    setCurrentTime(target);
+    if (!ytActiveId) return;
+    setCurrentTime(prev => Math.max(0, prev + seconds));
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-skip-seconds', seconds);
+    }
   };
 
   const nextYtTrack = () => {
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.nextVideo === 'function') {
-      ytPlayerRef.current.nextVideo();
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-next-track');
     }
   };
 
   const prevYtTrack = () => {
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.previousVideo === 'function') {
-      ytPlayerRef.current.previousVideo();
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-prev-track');
     }
   };
 
@@ -440,14 +358,14 @@ useEffect(() => {
   const handleSeekMouseUp = (e) => {
     setIsSeeking(false);
     const targetTime = parseFloat(e.target.value);
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
-      ytPlayerRef.current.seekTo(targetTime, true);
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-seek', targetTime);
     }
   };
 
   const stopYtStream = () => {
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.stopVideo === 'function') {
-      ytPlayerRef.current.stopVideo();
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-stop');
     }
     setYtActiveId('');
     setYtState({ isPlaying: false, isReady: false, currentTitle: '' });
@@ -685,22 +603,6 @@ useEffect(() => {
       {enableParticles && (
         <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none -z-10" />
       )}
-
-      {/* Persistent On-Screen YouTube Engine (Kept active without throttling) */}
-      <div 
-        style={{
-          position: 'fixed',
-          bottom: '10px',
-          left: '10px',
-          width: '200px',
-          height: '120px',
-          opacity: 0.001,
-          pointerEvents: 'none',
-          zIndex: -50
-        }}
-      >
-        <div id="yt-native-engine" />
-      </div>
 
       {/* Draggable HUD Container */}
       <div 
@@ -1080,17 +982,17 @@ useEffect(() => {
             <div className="pt-2 flex items-center gap-2.5 border-t border-zinc-800/80">
               <Volume2 size={15} className="text-zinc-400 shrink-0" />
               <input
-  type="range"
-  min="0"
-  max="1"
-  step="0.01"
-  value={volume}
-  onChange={(e) => {
-    const val = parseFloat(e.target.value);
-    setVolume(val < 0.02 ? 0 : val);
-  }}
-  className="w-full accent-amber-400 h-1 bg-zinc-800 rounded cursor-pointer"
-/>
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={volume}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value);
+                  setVolume(val < 0.02 ? 0 : val);
+                }}
+                className="w-full accent-amber-400 h-1 bg-zinc-800 rounded cursor-pointer"
+              />
               <span className="text-xs text-zinc-400 font-mono w-7 text-right">
                 {Math.round(volume * 100)}%
               </span>
@@ -1148,7 +1050,7 @@ useEffect(() => {
                     idleDisplayMode === 'clock' ? 'bg-[#FCD34D] text-zinc-950 shadow' : 'text-zinc-400 hover:text-white'
                   }`}
                 >
-                  Live Clock
+                  Live Clock (With Secs)
                 </button>
               </div>
             </div>
