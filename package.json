@@ -4,12 +4,13 @@
   "version": "1.0.0",
   "type": "module",
   "main": "electron.js",
-"scripts": {
+  "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "electron": "electron .",
-    "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && node_modules\\.bin\\electron .\""
+    "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && node_modules\\.bin\\electron .\"",
+    "electron:build": "npm run build && electron-builder"
   },
   "dependencies": {
     "lucide-react": "^0.344.0",
@@ -29,5 +30,24 @@
     "tailwindcss": "^3.4.3",
     "vite": "^5.4.2",
     "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.animefocus.app",
+    "productName": "Anime Focus Dashboard",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron.js",
+      "public/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

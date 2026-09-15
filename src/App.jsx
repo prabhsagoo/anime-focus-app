@@ -14,25 +14,25 @@ const DEFAULT_WALLPAPERS = [
   { 
     id: 'jujutsu-kaisen', 
     name: 'Jujutsu Kaisen', 
-    url: '/wallpapers/Jujutsu%20Kaisen.mp4', 
+    url: './wallpapers/Jujutsu%20Kaisen.mp4', 
     type: 'video' 
   },
   { 
     id: 'car', 
     name: 'Car', 
-    url: '/wallpapers/Car.png', 
+    url: './wallpapers/Car.png', 
     type: 'image' 
   },
   { 
     id: 'light', 
     name: 'Light', 
-    url: '/wallpapers/Light.png', 
+    url: './wallpapers/Light.png', 
     type: 'image' 
   },
   { 
     id: 'skull', 
     name: 'Skull', 
-    url: '/wallpapers/Skull.png', 
+    url: './wallpapers/Skull.png', 
     type: 'image' 
   }
 ];
@@ -56,9 +56,9 @@ const SOUNDS = [
 ];
 
 const YT_PRESETS = [
-  { id: '4xDzrJKXOOY', name: 'Synthwave Radio' },
-  { id: 'CFGLoQIhmow', name: 'Lofi Girl Relax' },
-  { id: 'UIzQEt2pRus', name: 'Cozy Piano Jazz' }
+  { id: '4xDzrJKXOOY', name: 'Synthwave Radio', title: '24/7 Synthwave Radio' },
+  { id: 'CFGLoQIhmow', name: 'Lofi Girl Relax', title: 'Lofi Girl Study & Chill' },
+  { id: 'UIzQEt2pRus', name: 'Cozy Piano Jazz', title: 'Cozy Piano Jazz Coffeehouse' }
 ];
 
 const FONT_STYLES = {
@@ -81,7 +81,7 @@ const parseYouTubeUrl = (url) => {
   const playlistMatch = cleanUrl.match(/[?&]list=([^#&?]+)/);
   const playlistId = playlistMatch ? playlistMatch[1] : null;
 
-  const videoMatch = cleanUrl.match(/(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=[\\&]?)([^#&?]{11})/);
+  const videoMatch = cleanUrl.match(/(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=)([^#&?]{11})/);
   const videoId = videoMatch ? videoMatch[1] : null;
 
   if (playlistId) {
@@ -164,13 +164,15 @@ export default function App() {
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskText, setEditingTaskText] = useState('');
   
-  // Audio & YouTube Player State
+  // Audio & YouTube State
   const [activeTab, setActiveTab] = useState(null);
   const [audioMode, setAudioMode] = useState('ambient');
   const [selectedSound, setSelectedSound] = useState(null);
   const [volume, setVolume] = useState(0.6);
   const [ytUrl, setYtUrl] = useState('');
-  const [ytState, setYtState] = useState({ isPlaying: false, isReady: false, isPlaylist: false, currentTitle: '' });
+  
+  const [ytActiveId, setYtActiveId] = useState('');
+  const [ytState, setYtState] = useState({ isPlaying: false, isReady: false, currentTitle: '' });
   
   // Progress Scrubber State
   const [currentTime, setCurrentTime] = useState(0);
@@ -181,7 +183,6 @@ export default function App() {
   const fileInputRef = useRef(null);
   const canvasRef = useRef(null);
   const widgetRef = useRef(null);
-  const ytPlayerRef = useRef(null);
   const isDraggingRef = useRef(false);
   const dragDataRef = useRef({ startX: 0, startY: 0, initX: 0, initY: 0, currentX: 0, currentY: 0 });
   const animFrameRef = useRef(null);
@@ -197,13 +198,24 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!window.YT) {
-      const tag = document.createElement('script');
-      tag.src = 'https://www.youtube.com/iframe_api';
-      const firstScriptTag = document.getElementsByTagName('script')[0];
-      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    if (ipcRenderer) {
+      const handleStats = (event, stats) => {
+        if (!stats) return;
+        if (!isSeeking && typeof stats.currentTime === 'number') {
+          setCurrentTime(stats.currentTime);
+        }
+        if (typeof stats.duration === 'number' && stats.duration > 0) {
+          setDuration(stats.duration);
+        }
+        if (typeof stats.paused === 'boolean') {
+          setYtState(prev => ({ ...prev, isPlaying: !stats.paused, isReady: true }));
+        }
+      };
+
+      ipcRenderer.on('yt-stats-update', handleStats);
+      return () => ipcRenderer.removeListener('yt-stats-update', handleStats);
     }
-  }, []);
+  }, [isSeeking]);
 
   useEffect(() => {
     try {
@@ -252,107 +264,66 @@ export default function App() {
 
   useEffect(() => {
     audioRef.current.volume = volume;
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.setVolume === 'function') {
-      ytPlayerRef.current.setVolume(volume * 100);
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-volume', volume);
     }
   }, [volume]);
 
-  useEffect(() => {
-    let interval;
-    if (ytState.isPlaying && ytState.isReady && !isSeeking) {
-      interval = setInterval(() => {
-        if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
-          const curr = ytPlayerRef.current.getCurrentTime() || 0;
-          const dur = ytPlayerRef.current.getDuration() || 0;
-          setCurrentTime(curr);
-          setDuration(dur);
-        }
-      }, 500);
-    }
-    return () => clearInterval(interval);
-  }, [ytState.isPlaying, ytState.isReady, isSeeking]);
-
-  const startYouTubeStream = (targetId, isPlaylist) => {
+  const startYouTubeStream = (targetId, isPlaylist = false, customTitle = '', optionalVideoId = null) => {
     setSelectedSound(null);
-    audioRef.current.pause();
+    if (audioRef.current) audioRef.current.pause();
 
-    if (!window.YT || !window.YT.Player) {
-      setTimeout(() => startYouTubeStream(targetId, isPlaylist), 400);
-      return;
-    }
+    const matched = YT_PRESETS.find(p => p.id === targetId);
+    const title = customTitle || (matched ? matched.title : 'Live Focus Stream');
 
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.destroy === 'function') {
-      try { ytPlayerRef.current.destroy(); } catch (_) {}
-    }
-
-    setYtState({ isPlaying: false, isReady: false, isPlaylist: isPlaylist, currentTitle: 'Connecting...' });
+    setYtActiveId(targetId);
+    setYtState({ isPlaying: true, isReady: true, currentTitle: title });
     setCurrentTime(0);
     setDuration(0);
 
-    const playerOptions = {
-      height: '180',
-      width: '260',
-      playerVars: {
-        autoplay: 1,
-        controls: 0,
-        disablekb: 1,
-        fs: 0,
-        modestbranding: 1,
-        rel: 0,
-        playsinline: 1
-      },
-      events: {
-        onReady: (event) => {
-          event.target.setVolume(volume * 100);
-          event.target.playVideo();
-          setYtState(prev => ({ 
-            ...prev, 
-            isReady: true, 
-            isPlaying: true, 
-            currentTitle: event.target.getVideoData()?.title || 'Streaming Audio'
-          }));
-          setDuration(event.target.getDuration() || 0);
-        },
-        onStateChange: (event) => {
-          if (event.data === 1) {
-            setYtState(prev => ({ 
-              ...prev, 
-              isPlaying: true, 
-              currentTitle: event.target.getVideoData()?.title || prev.currentTitle 
-            }));
-            setDuration(event.target.getDuration() || 0);
-          } else if (event.data === 2) {
-            setYtState(prev => ({ ...prev, isPlaying: false }));
-          }
-        }
-      }
-    };
-
+    let targetUrl = '';
     if (isPlaylist) {
-      playerOptions.playerVars.listType = 'playlist';
-      playerOptions.playerVars.list = targetId;
+      if (optionalVideoId) {
+        targetUrl = `https://www.youtube.com/watch?v=${optionalVideoId}&list=${targetId}&autoplay=1`;
+      } else {
+        targetUrl = `https://www.youtube.com/watch?list=${targetId}&autoplay=1`;
+      }
     } else {
-      playerOptions.videoId = targetId;
+      targetUrl = `https://www.youtube.com/watch?v=${targetId}&autoplay=1`;
     }
 
-    ytPlayerRef.current = new window.YT.Player('yt-embedded-instance', playerOptions);
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-play', { url: targetUrl, volume: volume });
+    }
   };
 
   const toggleYtPlayback = () => {
-    if (!ytPlayerRef.current || !ytState.isReady) return;
-    if (ytState.isPlaying) {
-      ytPlayerRef.current.pauseVideo();
-    } else {
-      ytPlayerRef.current.playVideo();
+    if (!ytActiveId) return;
+    const nextState = !ytState.isPlaying;
+    setYtState(prev => ({ ...prev, isPlaying: nextState }));
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-toggle-play', nextState);
     }
   };
 
   const skipYtSeconds = (seconds) => {
-    if (!ytPlayerRef.current || !ytState.isReady) return;
-    const current = ytPlayerRef.current.getCurrentTime() || 0;
-    const target = Math.max(0, current + seconds);
-    ytPlayerRef.current.seekTo(target, true);
-    setCurrentTime(target);
+    if (!ytActiveId) return;
+    setCurrentTime(prev => Math.max(0, prev + seconds));
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-skip-seconds', seconds);
+    }
+  };
+
+  const nextYtTrack = () => {
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-next-track');
+    }
+  };
+
+  const prevYtTrack = () => {
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-prev-track');
+    }
   };
 
   const handleSeekChange = (e) => {
@@ -363,28 +334,17 @@ export default function App() {
   const handleSeekMouseUp = (e) => {
     setIsSeeking(false);
     const targetTime = parseFloat(e.target.value);
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
-      ytPlayerRef.current.seekTo(targetTime, true);
-    }
-  };
-
-  const nextYtTrack = () => {
-    if (ytPlayerRef.current && ytState.isReady && typeof ytPlayerRef.current.nextVideo === 'function') {
-      ytPlayerRef.current.nextVideo();
-    }
-  };
-
-  const prevYtTrack = () => {
-    if (ytPlayerRef.current && ytState.isReady && typeof ytPlayerRef.current.previousVideo === 'function') {
-      ytPlayerRef.current.previousVideo();
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-seek', targetTime);
     }
   };
 
   const stopYtStream = () => {
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.stopVideo === 'function') {
-      ytPlayerRef.current.stopVideo();
+    if (ipcRenderer) {
+      ipcRenderer.send('yt-stop');
     }
-    setYtState({ isPlaying: false, isReady: false, isPlaylist: false, currentTitle: '' });
+    setYtActiveId('');
+    setYtState({ isPlaying: false, isReady: false, currentTitle: '' });
     setCurrentTime(0);
     setDuration(0);
   };
@@ -393,7 +353,12 @@ export default function App() {
     e?.preventDefault();
     const parsed = parseYouTubeUrl(ytUrl);
     if (parsed) {
-      startYouTubeStream(parsed.targetId, parsed.type === 'playlist');
+      startYouTubeStream(
+        parsed.targetId, 
+        parsed.type === 'playlist', 
+        'Loaded YouTube Stream', 
+        parsed.videoId
+      );
     }
   };
 
@@ -615,22 +580,6 @@ export default function App() {
       {enableParticles && (
         <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none -z-10" />
       )}
-
-      {/* Persistent Off-Screen YouTube Target */}
-      <div 
-        style={{
-          position: 'absolute',
-          left: '-9999px',
-          top: '-9999px',
-          width: '300px',
-          height: '200px',
-          visibility: 'visible',
-          opacity: 0.01,
-          pointerEvents: 'none'
-        }}
-      >
-        <div id="yt-embedded-instance" />
-      </div>
 
       {/* Draggable HUD Container */}
       <div 
@@ -865,7 +814,7 @@ export default function App() {
 
             <div className="min-h-[265px] flex flex-col justify-between transition-all duration-300">
               {audioMode === 'ambient' ? (
-                <div className="flex flex-col gap-2 my-auto animate-fadeIn">
+                <div className="flex flex-col gap-2 my-auto">
                   {SOUNDS.map((sound) => (
                     <button
                       key={sound.id}
@@ -889,7 +838,7 @@ export default function App() {
                   ))}
                 </div>
               ) : (
-                <div className="flex flex-col gap-2.5 justify-between h-full animate-fadeIn">
+                <div className="flex flex-col gap-2.5 justify-between h-full">
                   <div className="flex flex-col gap-1.5">
                     <span className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold flex items-center gap-1">
                       <Radio size={12} className="text-amber-400" /> Quick Stations
@@ -898,8 +847,12 @@ export default function App() {
                       {YT_PRESETS.map((preset) => (
                         <button
                           key={preset.id}
-                          onClick={() => startYouTubeStream(preset.id, preset.type === 'playlist')}
-                          className="bg-zinc-900/80 hover:bg-zinc-800 border border-white/5 py-1.5 rounded-lg text-[11px] text-zinc-300 truncate px-2 text-center transition cursor-pointer hover:border-amber-400/40"
+                          onClick={() => startYouTubeStream(preset.id, false, preset.title)}
+                          className={`border py-1.5 rounded-lg text-[11px] truncate px-2 text-center transition cursor-pointer ${
+                            ytActiveId === preset.id 
+                              ? 'bg-amber-400 text-zinc-950 border-amber-400 font-semibold' 
+                              : 'bg-zinc-900/80 hover:bg-zinc-800 border-white/5 text-zinc-300 hover:border-amber-400/40'
+                          }`}
                           title={preset.name}
                         >
                           {preset.name}
@@ -924,9 +877,9 @@ export default function App() {
                     </button>
                   </form>
 
-                  <div className={`bg-zinc-900/90 border border-white/10 rounded-xl p-3 flex flex-col gap-2 shadow-lg transition-all duration-200 ${ytState.isReady ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+                  <div className={`bg-zinc-900/90 border border-white/10 rounded-xl p-3 flex flex-col gap-2 shadow-lg transition-all duration-200 ${ytActiveId ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
                     <div className="text-xs text-amber-300 font-medium truncate drop-shadow px-1">
-                      {ytState.isReady ? ytState.currentTitle : 'No active stream loaded'}
+                      {ytActiveId ? ytState.currentTitle : 'No active stream loaded'}
                     </div>
 
                     <div className="flex flex-col gap-1 px-1">
@@ -952,7 +905,7 @@ export default function App() {
                       <button 
                         onClick={prevYtTrack} 
                         className="text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-zinc-800 transition cursor-pointer"
-                        title="Previous in Playlist"
+                        title="Previous Track"
                       >
                         <SkipBack size={15} />
                       </button>
@@ -984,7 +937,7 @@ export default function App() {
                       <button 
                         onClick={nextYtTrack} 
                         className="text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-zinc-800 transition cursor-pointer"
-                        title="Next in Playlist"
+                        title="Next Track"
                       >
                         <SkipForward size={15} />
                       </button>
