@@ -4,7 +4,7 @@ import {
   Volume2, Check, Trash2, Edit2, X, Image as ImageIcon,
   Flame, Coffee, Upload, Zap, Move, Play, Pause,
   RotateCcw as SkipBack15, RotateCw as SkipFwd15,
-  SkipForward, SkipBack, Radio, Monitor
+  SkipForward, SkipBack, Radio, Monitor, Clock
 } from 'lucide-react';
 
 const { ipcRenderer } = window.require ? window.require('electron') : {};
@@ -119,6 +119,9 @@ export default function App() {
   const [fontStyle, setFontStyle] = useState(() => {
     try { return localStorage.getItem('fontStyle') || 'mono'; } catch { return 'mono'; }
   });
+  const [idleDisplayMode, setIdleDisplayMode] = useState(() => {
+    try { return localStorage.getItem('idleDisplayMode') || 'timer'; } catch { return 'timer'; }
+  });
   
   const [currentBg, setCurrentBg] = useState(() => {
     try { 
@@ -159,12 +162,15 @@ export default function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [isBreak, setIsBreak] = useState(false);
   
+  // Real-time Clock State
+  const [realTime, setRealTime] = useState(() => new Date());
+
   // Task Editing State
   const [newTask, setNewTask] = useState('');
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskText, setEditingTaskText] = useState('');
   
-  // Audio & YouTube State
+  // Audio & YouTube Player State
   const [activeTab, setActiveTab] = useState(null);
   const [audioMode, setAudioMode] = useState('ambient');
   const [selectedSound, setSelectedSound] = useState(null);
@@ -183,6 +189,7 @@ export default function App() {
   const fileInputRef = useRef(null);
   const canvasRef = useRef(null);
   const widgetRef = useRef(null);
+  const ytPlayerRef = useRef(null);
   const isDraggingRef = useRef(false);
   const dragDataRef = useRef({ startX: 0, startY: 0, initX: 0, initY: 0, currentX: 0, currentY: 0 });
   const animFrameRef = useRef(null);
@@ -197,25 +204,55 @@ export default function App() {
     }
   };
 
+  // Load YouTube IFrame API Script
   useEffect(() => {
-    if (ipcRenderer) {
-      const handleStats = (event, stats) => {
-        if (!stats) return;
-        if (!isSeeking && typeof stats.currentTime === 'number') {
-          setCurrentTime(stats.currentTime);
-        }
-        if (typeof stats.duration === 'number' && stats.duration > 0) {
-          setDuration(stats.duration);
-        }
-        if (typeof stats.paused === 'boolean') {
-          setYtState(prev => ({ ...prev, isPlaying: !stats.paused, isReady: true }));
-        }
-      };
-
-      ipcRenderer.on('yt-stats-update', handleStats);
-      return () => ipcRenderer.removeListener('yt-stats-update', handleStats);
+    if (!window.YT) {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
     }
-  }, [isSeeking]);
+  }, []);
+
+  // Live Clock Ticker
+  useEffect(() => {
+    const timer = setInterval(() => setRealTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatClockTime = (date) => {
+  return date.toLocaleTimeString([], { 
+    hour: '2-digit', 
+    minute: '2-digit', 
+    second: '2-digit', 
+    hour12: false 
+  });
+};
+
+  // Synchronize Player Stats & Time
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
+        const player = ytPlayerRef.current;
+        const cur = player.getCurrentTime() || 0;
+        const dur = player.getDuration() || 0;
+        
+        if (!isSeeking) {
+          setCurrentTime(cur);
+          setDuration(dur);
+        }
+
+        try {
+          const videoData = player.getVideoData();
+          if (videoData && videoData.title && videoData.title !== ytState.currentTitle) {
+            setYtState(prev => ({ ...prev, currentTitle: videoData.title }));
+          }
+        } catch (_) {}
+      }
+    }, 400);
+
+    return () => clearInterval(interval);
+  }, [isSeeking, ytState.currentTitle]);
 
   useEffect(() => {
     try {
@@ -223,6 +260,7 @@ export default function App() {
       localStorage.setItem('breakDuration', breakDuration);
       localStorage.setItem('uiScale', uiScale);
       localStorage.setItem('fontStyle', fontStyle);
+      localStorage.setItem('idleDisplayMode', idleDisplayMode);
       localStorage.setItem('currentBg', currentBg === 'custom' ? 'none' : currentBg);
       localStorage.setItem('desktopMode', desktopMode);
       localStorage.setItem('enableParticles', enableParticles);
@@ -232,7 +270,7 @@ export default function App() {
     } catch (err) {
       console.warn('LocalStorage guarded:', err);
     }
-  }, [focusDuration, breakDuration, uiScale, fontStyle, currentBg, desktopMode, enableParticles, layoutMode, pos, tasks]);
+  }, [focusDuration, breakDuration, uiScale, fontStyle, idleDisplayMode, currentBg, desktopMode, enableParticles, layoutMode, pos, tasks]);
 
   useEffect(() => {
     let interval = null;
@@ -262,67 +300,135 @@ export default function App() {
     return () => audioRef.current.pause();
   }, [selectedSound, audioMode]);
 
-  useEffect(() => {
+  // Volume Controller
+  // Strict Mute & Volume Controller
+useEffect(() => {
+  // 1. Ambient Audio Element
+  if (audioRef.current) {
     audioRef.current.volume = volume;
-    if (ipcRenderer) {
-      ipcRenderer.send('yt-volume', volume);
-    }
-  }, [volume]);
+    audioRef.current.muted = volume === 0;
+  }
 
-  const startYouTubeStream = (targetId, isPlaylist = false, customTitle = '', optionalVideoId = null) => {
+  // 2. YouTube Engine Player
+  if (ytPlayerRef.current && typeof ytPlayerRef.current.setVolume === 'function') {
+    if (volume === 0) {
+      ytPlayerRef.current.setVolume(0);
+      ytPlayerRef.current.mute();
+    } else {
+      ytPlayerRef.current.unMute();
+      ytPlayerRef.current.setVolume(Math.round(volume * 100));
+    }
+  }
+}, [volume]);
+
+  // Direct YouTube Player Execution
+  const startYouTubeStream = (targetId, isPlaylist = false, customTitle = '') => {
     setSelectedSound(null);
     if (audioRef.current) audioRef.current.pause();
 
     const matched = YT_PRESETS.find(p => p.id === targetId);
-    const title = customTitle || (matched ? matched.title : 'Live Focus Stream');
+    const title = customTitle || (matched ? matched.title : 'Connecting...');
 
     setYtActiveId(targetId);
     setYtState({ isPlaying: true, isReady: true, currentTitle: title });
     setCurrentTime(0);
     setDuration(0);
 
-    let targetUrl = '';
-    if (isPlaylist) {
-      if (optionalVideoId) {
-        targetUrl = `https://www.youtube.com/watch?v=${optionalVideoId}&list=${targetId}&autoplay=1`;
-      } else {
-        targetUrl = `https://www.youtube.com/watch?list=${targetId}&autoplay=1`;
+    const initPlayer = () => {
+      if (!window.YT || !window.YT.Player) {
+        setTimeout(initPlayer, 200);
+        return;
       }
-    } else {
-      targetUrl = `https://www.youtube.com/watch?v=${targetId}&autoplay=1`;
-    }
 
-    if (ipcRenderer) {
-      ipcRenderer.send('yt-play', { url: targetUrl, volume: volume });
-    }
+      if (ytPlayerRef.current && typeof ytPlayerRef.current.destroy === 'function') {
+        try { ytPlayerRef.current.destroy(); } catch (_) {}
+      }
+
+      const playerVars = {
+        autoplay: 1,
+        controls: 0,
+        disablekb: 1,
+        fs: 0,
+        rel: 0,
+        enablejsapi: 1,
+        origin: window.location.origin
+      };
+
+      const playerConfig = {
+        height: '180',
+        width: '320',
+        playerVars: playerVars,
+        events: {
+          onReady: (event) => {
+            event.target.setVolume(volume * 100);
+            event.target.unMute();
+            event.target.playVideo();
+            setYtState(prev => ({
+              ...prev,
+              isPlaying: true,
+              isReady: true,
+              currentTitle: event.target.getVideoData()?.title || title
+            }));
+          },
+          onStateChange: (event) => {
+            // State 1 = Playing, State 2 = Paused, State 0 = Ended
+            if (event.data === 1) {
+              setYtState(prev => ({
+                ...prev,
+                isPlaying: true,
+                currentTitle: event.target.getVideoData()?.title || prev.currentTitle
+              }));
+            } else if (event.data === 2) {
+              setYtState(prev => ({ ...prev, isPlaying: false }));
+            } else if (event.data === 0 && isPlaylist) {
+              event.target.nextVideo();
+            }
+          }
+        }
+      };
+
+      if (isPlaylist) {
+        playerConfig.playerVars.listType = 'playlist';
+        playerConfig.playerVars.list = targetId;
+      } else {
+        playerConfig.videoId = targetId;
+      }
+
+      ytPlayerRef.current = new window.YT.Player('yt-native-engine', playerConfig);
+    };
+
+    initPlayer();
   };
 
   const toggleYtPlayback = () => {
-    if (!ytActiveId) return;
-    const nextState = !ytState.isPlaying;
-    setYtState(prev => ({ ...prev, isPlaying: nextState }));
-    if (ipcRenderer) {
-      ipcRenderer.send('yt-toggle-play', nextState);
+    if (!ytPlayerRef.current || typeof ytPlayerRef.current.getPlayerState !== 'function') return;
+    const state = ytPlayerRef.current.getPlayerState();
+    if (state === 1) {
+      ytPlayerRef.current.pauseVideo();
+      setYtState(prev => ({ ...prev, isPlaying: false }));
+    } else {
+      ytPlayerRef.current.playVideo();
+      setYtState(prev => ({ ...prev, isPlaying: true }));
     }
   };
 
   const skipYtSeconds = (seconds) => {
-    if (!ytActiveId) return;
-    setCurrentTime(prev => Math.max(0, prev + seconds));
-    if (ipcRenderer) {
-      ipcRenderer.send('yt-skip-seconds', seconds);
-    }
+    if (!ytPlayerRef.current || typeof ytPlayerRef.current.getCurrentTime !== 'function') return;
+    const current = ytPlayerRef.current.getCurrentTime() || 0;
+    const target = Math.max(0, current + seconds);
+    ytPlayerRef.current.seekTo(target, true);
+    setCurrentTime(target);
   };
 
   const nextYtTrack = () => {
-    if (ipcRenderer) {
-      ipcRenderer.send('yt-next-track');
+    if (ytPlayerRef.current && typeof ytPlayerRef.current.nextVideo === 'function') {
+      ytPlayerRef.current.nextVideo();
     }
   };
 
   const prevYtTrack = () => {
-    if (ipcRenderer) {
-      ipcRenderer.send('yt-prev-track');
+    if (ytPlayerRef.current && typeof ytPlayerRef.current.previousVideo === 'function') {
+      ytPlayerRef.current.previousVideo();
     }
   };
 
@@ -334,14 +440,14 @@ export default function App() {
   const handleSeekMouseUp = (e) => {
     setIsSeeking(false);
     const targetTime = parseFloat(e.target.value);
-    if (ipcRenderer) {
-      ipcRenderer.send('yt-seek', targetTime);
+    if (ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+      ytPlayerRef.current.seekTo(targetTime, true);
     }
   };
 
   const stopYtStream = () => {
-    if (ipcRenderer) {
-      ipcRenderer.send('yt-stop');
+    if (ytPlayerRef.current && typeof ytPlayerRef.current.stopVideo === 'function') {
+      ytPlayerRef.current.stopVideo();
     }
     setYtActiveId('');
     setYtState({ isPlaying: false, isReady: false, currentTitle: '' });
@@ -356,8 +462,7 @@ export default function App() {
       startYouTubeStream(
         parsed.targetId, 
         parsed.type === 'playlist', 
-        'Loaded YouTube Stream', 
-        parsed.videoId
+        'Loaded YouTube Stream'
       );
     }
   };
@@ -581,6 +686,22 @@ export default function App() {
         <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none -z-10" />
       )}
 
+      {/* Persistent On-Screen YouTube Engine (Kept active without throttling) */}
+      <div 
+        style={{
+          position: 'fixed',
+          bottom: '10px',
+          left: '10px',
+          width: '200px',
+          height: '120px',
+          opacity: 0.001,
+          pointerEvents: 'none',
+          zIndex: -50
+        }}
+      >
+        <div id="yt-native-engine" />
+      </div>
+
       {/* Draggable HUD Container */}
       <div 
         ref={widgetRef}
@@ -635,9 +756,11 @@ export default function App() {
           </button>
         </div>
 
-        {/* Digital Clock Display */}
-        <h1 className={`${scale.clock} ${FONT_STYLES[fontStyle]} text-white drop-shadow-[0_8px_32px_rgba(0,0,0,0.95)] leading-none py-1`}>
-          {formatTime(timeLeft)}
+        {/* Single Digital Clock / Timer Display */}
+        <h1 className={`${scale.clock} ${FONT_STYLES[fontStyle]} text-white drop-shadow-[0_8px_32px_rgba(0,0,0,0.95)] leading-none py-1 transition-all duration-300`}>
+          {isRunning || isBreak || idleDisplayMode === 'timer'
+            ? formatTime(timeLeft)
+            : formatClockTime(realTime)}
         </h1>
 
         {/* Control Buttons */}
@@ -957,14 +1080,17 @@ export default function App() {
             <div className="pt-2 flex items-center gap-2.5 border-t border-zinc-800/80">
               <Volume2 size={15} className="text-zinc-400 shrink-0" />
               <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.02"
-                value={volume}
-                onChange={(e) => setVolume(parseFloat(e.target.value))}
-                className="w-full accent-amber-400 h-1 bg-zinc-800 rounded cursor-pointer"
-              />
+  type="range"
+  min="0"
+  max="1"
+  step="0.01"
+  value={volume}
+  onChange={(e) => {
+    const val = parseFloat(e.target.value);
+    setVolume(val < 0.02 ? 0 : val);
+  }}
+  className="w-full accent-amber-400 h-1 bg-zinc-800 rounded cursor-pointer"
+/>
               <span className="text-xs text-zinc-400 font-mono w-7 text-right">
                 {Math.round(volume * 100)}%
               </span>
@@ -999,6 +1125,32 @@ export default function App() {
               >
                 <div className="w-4 h-4 rounded-full bg-zinc-950 shadow" />
               </button>
+            </div>
+
+            {/* Idle Display Mode: Pomodoro vs Live Clock */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5 text-xs text-zinc-300 font-medium">
+                <Clock size={13} className="text-amber-400" />
+                <span>Idle Display Mode</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1 bg-zinc-900/80 p-1 rounded-xl border border-white/5">
+                <button
+                  onClick={() => setIdleDisplayMode('timer')}
+                  className={`py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                    idleDisplayMode === 'timer' ? 'bg-[#FCD34D] text-zinc-950 shadow' : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  Pomodoro ({focusDuration}:00)
+                </button>
+                <button
+                  onClick={() => setIdleDisplayMode('clock')}
+                  className={`py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                    idleDisplayMode === 'clock' ? 'bg-[#FCD34D] text-zinc-950 shadow' : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  Live Clock
+                </button>
+              </div>
             </div>
 
             {/* Placement */}
